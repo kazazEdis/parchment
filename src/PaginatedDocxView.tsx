@@ -1,0 +1,156 @@
+"use client";
+
+// Computed-pagination viewer (ARCHITECTURE.md §3.8, Tier-2). Renders the document into real page
+// sheets: it measures each top-level block's height in an offscreen pass, packs blocks into pages of
+// the section's content height (paginate.packPages), then lays out one fixed-size page per group with
+// a page-number footer. Block-level breaks in v1 (a paragraph/table stays whole); line-level
+// splitting is a later refinement. This is the layout-engine SuperDoc has — here, light and owned.
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type DocxPackage, getPartText } from "./opc";
+import { parseDocument, parseContainer, type Block, type Paragraph, type Inline } from "./model";
+import { headerXml, footerXml } from "./headerFooter";
+import { parseStyles, type StyleSheet } from "./styles";
+import { parseNumbering, type Numbering } from "./numbering";
+import { effectiveParagraphProps, effectiveRunProps, markerRunProps, assignListNumbers } from "./resolve";
+import { paragraphCss, runCss, trackCss, drawingCss } from "./cssMap";
+import { resolveTableGrid } from "./table";
+import { resolveImageDataUrl, relationshipTarget } from "./images";
+import { ommlToMathML } from "./math";
+import { twipsToPx } from "./units";
+import { computePageBreaks } from "./paginate";
+
+interface Ctx {
+  sheet: StyleSheet;
+  numbering: Numbering;
+  markers: Map<Paragraph, string>;
+  pkg: DocxPackage;
+}
+
+const renderText = (text: string): React.ReactNode[] => {
+  const out: React.ReactNode[] = [];
+  text.split("\n").forEach((line, li) => {
+    if (li > 0) out.push(<br key={`b${li}`} />);
+    line.split("\t").forEach((seg, si) => {
+      if (si > 0) out.push(<span key={`t${li}-${si}`} style={{ display: "inline-block", width: "0.5in" }} />);
+      if (seg) out.push(<React.Fragment key={`s${li}-${si}`}>{seg}</React.Fragment>);
+    });
+  });
+  return out;
+};
+
+function Inline({ node, paraPPr, ctx }: { node: Inline; paraPPr: Paragraph["pPr"]; ctx: Ctx }): React.ReactElement | null {
+  if (node.type === "run") {
+    const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, paraPPr, node.rPr));
+    return <span style={node.track ? { ...css, ...trackCss(node.track.type) } : css}>{renderText(node.text)}</span>;
+  }
+  if (node.type === "hyperlink") {
+    const href = node.rId ? relationshipTarget(ctx.pkg, node.rId) : node.anchor ? `#${node.anchor}` : undefined;
+    return <a href={href} style={{ color: "#0563C1", textDecoration: "underline" }}>{node.children.map((c, i) => <Inline key={i} node={c} paraPPr={paraPPr} ctx={ctx} />)}</a>;
+  }
+  if (node.type === "footnoteRef") return <sup style={{ color: "#1C5742", fontSize: "0.7em" }}>{node.id}</sup>;
+  if (node.type === "math") return <span dangerouslySetInnerHTML={{ __html: ommlToMathML(node.omml) }} />;
+  const src = node.rEmbed ? resolveImageDataUrl(ctx.pkg, node.rEmbed) : undefined;
+  return src ? <img src={src} alt={node.alt ?? ""} style={drawingCss(node.widthEmu, node.heightEmu)} /> : null;
+}
+
+function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
+  if (b.type === "paragraph") {
+    const eff = effectiveParagraphProps(ctx.sheet, ctx.numbering, b.pPr);
+    const marker = ctx.markers.get(b);
+    return (
+      <p key={key} style={{ margin: 0, ...paragraphCss(eff) }}>
+        {marker !== undefined && <span style={{ ...runCss(markerRunProps(ctx.sheet, ctx.numbering, b.pPr)), marginRight: "0.4em" }}>{marker}</span>}
+        {b.children.length ? b.children.map((n, i) => <Inline key={i} node={n} paraPPr={b.pPr} ctx={ctx} />) : <br />}
+      </p>
+    );
+  }
+  const total = b.grid.reduce((a, c) => a + c, 0);
+  const grid = resolveTableGrid(b);
+  return (
+    <table key={key} style={{ borderCollapse: "collapse", tableLayout: "fixed", width: total ? twipsToPx(total) : "100%", margin: "0 0 8px" }}>
+      <tbody>
+        {grid.map((cells, ri) => (
+          <tr key={ri}>{cells.map((rc, ci) => (
+            <td key={ci} colSpan={rc.colSpan > 1 ? rc.colSpan : undefined} rowSpan={rc.rowSpan > 1 ? rc.rowSpan : undefined} style={{ border: "1px solid #b3b3b3", padding: "2px 5px", verticalAlign: "top" }}>
+              {rc.cell.blocks.map((cb, bi) => renderBlock(cb, ctx, bi))}
+            </td>
+          ))}</tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+export function PaginatedDocxView({ pkg }: { pkg: DocxPackage }): React.ReactElement {
+  const { blocks, header, footer, ctx, geo } = useMemo(() => {
+    const model = parseDocument(getPartText(pkg, "word/document.xml") ?? "");
+    const sheet = parseStyles(getPartText(pkg, "word/styles.xml") ?? "");
+    const numbering = parseNumbering(getPartText(pkg, "word/numbering.xml") ?? "");
+    const markers = assignListNumbers(model, numbering);
+    const sec = model.section;
+    const m = sec?.margins ?? {};
+    const padTop = twipsToPx(m.top ?? 1440), padRight = twipsToPx(m.right ?? 1440), padBottom = twipsToPx(m.bottom ?? 1440), padLeft = twipsToPx(m.left ?? 1440);
+    const pageWidth = twipsToPx(sec?.pageSize?.width ?? 11906);
+    const pageHeight = twipsToPx(sec?.pageSize?.height ?? 16838);
+    const footerReserve = 28;
+    const geo = { pageWidth, pageHeight, padTop, padRight, padBottom, padLeft, contentWidth: pageWidth - padLeft - padRight, contentHeight: pageHeight - padTop - padBottom - footerReserve };
+    const header = parseContainer(headerXml(pkg, model.section) ?? "", "w:hdr");
+    const footer = parseContainer(footerXml(pkg, model.section) ?? "", "w:ftr");
+    return { blocks: model.body, header, footer, ctx: { sheet, numbering, markers, pkg } as Ctx, geo };
+  }, [pkg]);
+
+  const blockNodes = useMemo(() => blocks.map((b, i) => renderBlock(b, ctx, i)), [blocks, ctx]);
+  const headerNodes = useMemo(() => header.map((b, i) => renderBlock(b, ctx, 10000 + i)), [header, ctx]);
+  const footerNodes = useMemo(() => footer.map((b, i) => renderBlock(b, ctx, 20000 + i)), [footer, ctx]);
+  const measureRef = useRef<HTMLDivElement | null>(null);
+  const [layout, setLayout] = useState<{ breaks: number[]; total: number } | null>(null);
+
+  // Measure every line's bottom-Y in the continuous flow (line-level breaks, the SuperDoc sliceLines
+  // idea); break on line boundaries so paragraphs split across pages without cutting a line.
+  useLayoutEffect(() => {
+    const root = measureRef.current;
+    if (!root) return;
+    const top = root.getBoundingClientRect().top;
+    const bottoms = new Set<number>();
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      for (const r of Array.from(range.getClientRects())) bottoms.add(Math.round(r.bottom - top));
+    }
+    root.querySelectorAll(":scope > *").forEach((el) => bottoms.add(Math.round(el.getBoundingClientRect().bottom - top)));
+    const sorted = [...bottoms].filter((b) => b > 0).sort((a, b) => a - b);
+    setLayout({ breaks: computePageBreaks(sorted, geo.contentHeight), total: root.scrollHeight });
+  }, [blockNodes, geo.contentWidth, geo.contentHeight]);
+
+  return (
+    <div style={{ background: "#e9e6df", padding: 24 }}>
+      {/* offscreen measurer (continuous flow at content width) */}
+      <div ref={measureRef} style={{ position: "absolute", visibility: "hidden", left: -99999, top: 0, width: geo.contentWidth, fontFamily: "Calibri, Carlito, sans-serif", fontSize: "11pt", lineHeight: 1.15 }}>
+        {blockNodes}
+      </div>
+      {layout?.breaks.map((startY, pi) => {
+        const endY = pi < layout.breaks.length - 1 ? layout.breaks[pi + 1] : layout.total;
+        return (
+          <div
+            key={pi}
+            className="docx-page"
+            style={{ width: geo.pageWidth, height: geo.pageHeight, margin: "0 auto 18px", background: "#fff", boxShadow: "0 1px 6px rgba(0,0,0,0.15)", boxSizing: "border-box", position: "relative", paddingTop: geo.padTop, paddingRight: geo.padRight, paddingBottom: geo.padBottom, paddingLeft: geo.padLeft, fontFamily: "Calibri, Carlito, sans-serif", fontSize: "11pt", lineHeight: 1.15, color: "#000", overflow: "hidden" }}
+          >
+            {headerNodes.length > 0 && (
+              <div style={{ position: "absolute", top: Math.max(8, geo.padTop / 3), left: geo.padLeft, right: geo.padRight, fontSize: "10pt", color: "#555" }}>{headerNodes}</div>
+            )}
+            {/* window clipped to this page's line slice; the same flow translated up by startY */}
+            <div style={{ height: Math.min(endY - startY, geo.contentHeight), overflow: "hidden" }}>
+              <div style={{ transform: `translateY(${-startY}px)`, width: geo.contentWidth }}>{blockNodes}</div>
+            </div>
+            {footerNodes.length > 0 && (
+              <div style={{ position: "absolute", bottom: Math.max(24, geo.padBottom / 3), left: geo.padLeft, right: geo.padRight, fontSize: "10pt", color: "#555" }}>{footerNodes}</div>
+            )}
+            <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, textAlign: "center", fontSize: "9pt", color: "#777" }}>{pi + 1} / {layout.breaks.length}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

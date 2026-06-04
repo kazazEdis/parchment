@@ -1,0 +1,94 @@
+// Effective OOXML properties → CSS (ARCHITECTURE.md §3.8 Tier-1 render). Pure: takes resolved
+// RunProps/ParagraphProps (from resolve.ts) and returns React.CSSProperties, converting units along
+// the way. No DOM/React runtime needed — the type import is erased — so this is unit-tested in Node.
+import type { CSSProperties } from "react";
+import type { RunProps, ParagraphProps } from "./props";
+import { twipsToPx, emuToPx, lineAutoToMultiple } from "./units";
+
+/** OOXML named highlight colours → CSS. */
+const HIGHLIGHT: Record<string, string> = {
+  yellow: "#ffff00", green: "#00ff00", cyan: "#00ffff", magenta: "#ff00ff", blue: "#0000ff",
+  red: "#ff0000", darkBlue: "#000080", darkCyan: "#008080", darkGreen: "#008000",
+  darkMagenta: "#800080", darkRed: "#800000", darkYellow: "#808000", darkGray: "#808080",
+  lightGray: "#c0c0c0", black: "#000000", white: "#ffffff", none: "transparent",
+};
+
+/** "FF0000" → "#FF0000"; "auto" → undefined (let the cascade/inherit decide). */
+function hexColor(v: string | undefined): string | undefined {
+  if (!v || v === "auto") return undefined;
+  return /^[0-9a-fA-F]{6}$/.test(v) ? `#${v}` : v;
+}
+
+/** Resolved run props → inline CSS for a text span. */
+export function runCss(p: RunProps): CSSProperties {
+  const css: CSSProperties = {};
+  if (p.bold !== undefined) css.fontWeight = p.bold ? "bold" : "normal";
+  if (p.italic !== undefined) css.fontStyle = p.italic ? "italic" : "normal";
+
+  const deco: string[] = [];
+  if (p.underline !== undefined && p.underline !== "none") deco.push("underline");
+  if (p.strike) deco.push("line-through");
+  if (deco.length) css.textDecoration = deco.join(" ");
+  else if (p.underline === "none" || p.strike === false) css.textDecoration = "none";
+
+  const color = hexColor(p.color);
+  if (color) css.color = color;
+  if (p.fontSize !== undefined) css.fontSize = `${p.fontSize}pt`;
+  if (p.fonts?.ascii) css.fontFamily = p.fonts.ascii;
+
+  if (p.highlight !== undefined) css.backgroundColor = HIGHLIGHT[p.highlight] ?? p.highlight;
+  else { const shd = hexColor(p.shading); if (shd) css.backgroundColor = shd; }
+
+  if (p.caps) css.textTransform = "uppercase";
+  if (p.smallCaps) css.fontVariant = "small-caps";
+  if (p.vertAlign === "superscript") { css.verticalAlign = "super"; css.fontSize = css.fontSize ?? "0.8em"; }
+  else if (p.vertAlign === "subscript") { css.verticalAlign = "sub"; css.fontSize = css.fontSize ?? "0.8em"; }
+  return css;
+}
+
+const ALIGN: Record<string, CSSProperties["textAlign"]> = {
+  left: "left", start: "left", right: "right", end: "right", center: "center",
+  both: "justify", distribute: "justify",
+};
+
+/** Resolved paragraph props → inline CSS for a block. */
+export function paragraphCss(p: ParagraphProps): CSSProperties {
+  const css: CSSProperties = {};
+  if (p.alignment) css.textAlign = ALIGN[p.alignment];
+
+  if (p.indent) {
+    if (p.indent.left !== undefined) css.marginLeft = twipsToPx(p.indent.left);
+    if (p.indent.right !== undefined) css.marginRight = twipsToPx(p.indent.right);
+    if (p.indent.firstLine !== undefined) css.textIndent = twipsToPx(p.indent.firstLine);
+    else if (p.indent.hanging !== undefined) css.textIndent = -twipsToPx(p.indent.hanging);
+  }
+
+  if (p.spacing) {
+    if (p.spacing.before !== undefined) css.marginTop = twipsToPx(p.spacing.before);
+    if (p.spacing.after !== undefined) css.marginBottom = twipsToPx(p.spacing.after);
+    if (p.spacing.line !== undefined) {
+      css.lineHeight = (p.spacing.lineRule ?? "auto") === "auto"
+        ? lineAutoToMultiple(p.spacing.line)
+        : `${twipsToPx(p.spacing.line)}px`;
+    }
+  }
+
+  const shd = hexColor(p.shading);
+  if (shd) css.backgroundColor = shd;
+  return css;
+}
+
+/** Redline styling for a tracked insertion/deletion run (underline-green / strike-red). */
+export function trackCss(type: "ins" | "del"): CSSProperties {
+  return type === "ins"
+    ? { color: "#2e7d32", textDecoration: "underline" }
+    : { color: "#c62828", textDecoration: "line-through" };
+}
+
+/** EMU width/height → CSS px sizing for an image/drawing. */
+export function drawingCss(widthEmu?: number, heightEmu?: number): CSSProperties {
+  const css: CSSProperties = {};
+  if (widthEmu !== undefined) css.width = emuToPx(widthEmu);
+  if (heightEmu !== undefined) css.height = emuToPx(heightEmu);
+  return css;
+}

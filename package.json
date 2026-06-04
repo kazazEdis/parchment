@@ -1,0 +1,42 @@
+{
+  "name": "parchment",
+  "version": "0.1.0",
+  "description": "Headless, MIT-licensed .docx engine + interactive web editor — byte-verbatim preserve-and-patch fidelity, line-level pagination, CRDT collaboration. Studied SuperDoc's architecture; contains no SuperDoc code.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Edis Kazaz",
+  "repository": { "type": "git", "url": "git+https://github.com/kazazEdis/parchment.git" },
+  "keywords": ["docx", "ooxml", "word", "editor", "wysiwyg", "crdt", "collaboration", "pagination", "track-changes", "headless"],
+  "exports": {
+    ".": "./src/index.ts",
+    "./react": "./src/react.ts"
+  },
+  "files": ["src", "ARCHITECTURE.md", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "yjs": "^13.6.31"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "file-saver": "^2.0.5"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true },
+    "file-saver": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/file-saver": "^2.0.7",
+    "@types/node": "^22",
+    "@types/react": "^18",
+    "docx": "^8.5.0",
+    "file-saver": "^2.0.5",
+    "react": "^18",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.7"
+  }
+}
