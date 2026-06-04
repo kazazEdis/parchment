@@ -218,9 +218,12 @@ function appendRunToParagraph(documentXml: string, p: Paragraph, runXml: string)
   return documentXml.slice(0, p.source.start) + newOuter + documentXml.slice(p.source.end);
 }
 
-export function DocxEditor({ initialPackage, collabChannel, onAiRewrite }: { initialPackage: DocxPackage; collabChannel?: string; onAiRewrite?: (selectedText: string, instruction: string) => Promise<string> }): React.ReactElement {
+export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChange }: { initialPackage: DocxPackage; collabChannel?: string; onAiRewrite?: (selectedText: string, instruction: string) => Promise<string>; onChange?: (doc: Doc) => void }): React.ReactElement {
   const [state, dispatch] = useReducer(reducer, undefined, () => ({ doc: fromPackage(initialPackage), past: [], future: [] }));
   const { doc } = state;
+  // Notify the host of the current document on every change (initial + each edit) — lets a parent
+  // drive an external Save / live preview from the edited bytes (doc.ts `save`/`saveBlob`).
+  useEffect(() => { onChange?.(doc); }, [doc, onChange]);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [track, setTrack] = useState(false);
   const [find, setFind] = useState("");
