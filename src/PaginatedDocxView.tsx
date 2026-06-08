@@ -102,7 +102,13 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
   );
 }
 
-export function PaginatedDocxView({ pkg }: { pkg: DocxPackage }): React.ReactElement {
+export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
+  pkg: DocxPackage;
+  /** Rendered at the top/bottom of every page ONLY when the docx has no header/footer of its own
+   *  (e.g. a host app's letterhead fallback). When the docx supplies one, it wins. */
+  headerOverride?: React.ReactNode;
+  footerOverride?: React.ReactNode;
+}): React.ReactElement {
   const { blocks, header, footer, ctx, headerCtx, footerCtx, geo } = useMemo(() => {
     const model = parseDocument(getPartText(pkg, "word/document.xml") ?? "");
     const sheet = parseStyles(getPartText(pkg, "word/styles.xml") ?? "");
@@ -163,9 +169,11 @@ export function PaginatedDocxView({ pkg }: { pkg: DocxPackage }): React.ReactEle
             className="docx-page"
             style={{ width: geo.pageWidth, height: geo.pageHeight, margin: "0 auto 18px", background: "#fff", boxShadow: "0 1px 6px rgba(0,0,0,0.15)", boxSizing: "border-box", position: "relative", paddingTop: geo.padTop, paddingRight: geo.padRight, paddingBottom: geo.padBottom, paddingLeft: geo.padLeft, fontFamily: "Calibri, Carlito, sans-serif", fontSize: "11pt", lineHeight: 1.15, color: "#000", overflow: "hidden" }}
           >
-            {headerNodes.length > 0 && (
+            {headerNodes.length > 0 ? (
               <div style={{ position: "absolute", top: Math.max(8, geo.padTop / 3), left: geo.padLeft, right: geo.padRight, fontSize: "10pt", color: "#555" }}>{headerNodes}</div>
-            )}
+            ) : headerOverride ? (
+              <div style={{ position: "absolute", top: Math.max(8, geo.padTop / 3), left: geo.padLeft, right: geo.padRight }}>{headerOverride}</div>
+            ) : null}
             {/* window clipped to this page's line slice; the same flow translated up by startY */}
             <div style={{ height: Math.min(endY - startY, geo.contentHeight), overflow: "hidden" }}>
               <div style={{ transform: `translateY(${-startY}px)`, width: geo.contentWidth }}>{blockNodes}</div>
@@ -175,8 +183,10 @@ export function PaginatedDocxView({ pkg }: { pkg: DocxPackage }): React.ReactEle
               <div style={{ position: "absolute", bottom: Math.max(24, geo.padBottom / 3), left: geo.padLeft, right: geo.padRight, fontSize: "10pt", color: "#555" }}>
                 {footer.map((b, i) => renderBlock(b, { ...footerCtx, page: { num: pi + 1, total: layout.breaks.length } }, 20000 + i))}
               </div>
+            ) : footerOverride ? (
+              <div style={{ position: "absolute", bottom: Math.max(24, geo.padBottom / 3), left: geo.padLeft, right: geo.padRight }}>{footerOverride}</div>
             ) : (
-              // No docx footer → a minimal page-number stamp so the page is still numbered.
+              // No docx footer / override → a minimal page-number stamp so the page is still numbered.
               <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, textAlign: "center", fontSize: "9pt", color: "#777" }}>{pi + 1} / {layout.breaks.length}</div>
             )}
           </div>
