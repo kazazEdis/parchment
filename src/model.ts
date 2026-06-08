@@ -42,6 +42,12 @@ export interface Drawing {
   widthEmu?: number;
   heightEmu?: number;
   alt?: string;
+  /** For an anchored (floating) drawing: horizontal/vertical offset in EMU from its anchor
+   *  origin (posOffset). The renderer absolute-positions the image at these offsets relative to
+   *  its paragraph; `behindDoc` drawings sit behind the text. align-based anchors → undefined. */
+  anchorXEmu?: number;
+  anchorYEmu?: number;
+  behindDoc?: boolean;
 }
 
 export interface Hyperlink {
@@ -214,13 +220,30 @@ function parseDrawing(xml: string, el: ElementSpan): Drawing {
   const extent = findElement(body, "wp:extent");
   const blip = findElement(body, "a:blip");
   const docPr = findElement(body, "wp:docPr");
+  const anchor = findElement(body, "wp:anchor");
+  // Anchored (floating) drawing: capture its posOffset (EMU) so the renderer can place it. Only
+  // the posOffset form is handled (the common case for header/footer logos); align-based stays undefined.
+  let anchorXEmu: number | undefined, anchorYEmu: number | undefined, behindDoc: boolean | undefined;
+  if (anchor) {
+    behindDoc = getAttr(anchor.openTag, "behindDoc") === "1";
+    const offOf = (which: string): number | undefined => {
+      const pos = findElement(body, which);
+      if (!pos) return undefined;
+      const sub = inner(body, pos);
+      const o = findElement(sub, "wp:posOffset");
+      return o ? parseMeasure(inner(sub, o).trim()) : undefined;
+    };
+    anchorXEmu = offOf("wp:positionH");
+    anchorYEmu = offOf("wp:positionV");
+  }
   return {
     type: "drawing",
-    anchored: findElement(body, "wp:anchor") !== undefined,
+    anchored: anchor !== undefined,
     rEmbed: blip ? getAttr(blip.openTag, "r:embed") : undefined,
     widthEmu: extent ? parseMeasure(getAttr(extent.openTag, "cx")) : undefined,
     heightEmu: extent ? parseMeasure(getAttr(extent.openTag, "cy")) : undefined,
     alt: docPr ? (getAttr(docPr.openTag, "descr") ?? getAttr(docPr.openTag, "name")) : undefined,
+    anchorXEmu, anchorYEmu, behindDoc,
   };
 }
 

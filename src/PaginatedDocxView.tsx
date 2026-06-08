@@ -16,7 +16,7 @@ import { paragraphCss, runCss, trackCss, drawingCss } from "./cssMap";
 import { resolveTableGrid } from "./table";
 import { resolveImageDataUrl, relationshipTarget } from "./images";
 import { ommlToMathML } from "./math";
-import { twipsToPx } from "./units";
+import { twipsToPx, emuToPx } from "./units";
 import { computePageBreaks } from "./paginate";
 
 interface Ctx {
@@ -51,7 +51,24 @@ function Inline({ node, paraPPr, ctx }: { node: Inline; paraPPr: Paragraph["pPr"
   if (node.type === "footnoteRef") return <sup style={{ color: "#1C5742", fontSize: "0.7em" }}>{node.id}</sup>;
   if (node.type === "math") return <span dangerouslySetInnerHTML={{ __html: ommlToMathML(node.omml) }} />;
   const src = node.rEmbed ? resolveImageDataUrl(ctx.pkg, node.rEmbed, ctx.relsPart) : undefined;
-  return src ? <img src={src} alt={node.alt ?? ""} style={drawingCss(node.widthEmu, node.heightEmu)} /> : null;
+  if (!src) return null;
+  const img = <img src={src} alt={node.alt ?? ""} style={drawingCss(node.widthEmu, node.heightEmu)} />;
+  // Anchored (floating) drawing → out of flow, absolutely positioned at its posOffset relative to the
+  // paragraph (which renderBlock marks position:relative). Inline drawings render in flow as before.
+  if (node.anchored && (node.anchorXEmu != null || node.anchorYEmu != null)) {
+    return (
+      <span style={{ position: "absolute", left: emuToPx(node.anchorXEmu ?? 0), top: emuToPx(node.anchorYEmu ?? 0), zIndex: node.behindDoc ? 0 : 2, lineHeight: 0 }}>
+        {img}
+      </span>
+    );
+  }
+  return img;
+}
+
+// Does a paragraph hold an anchored (floating) drawing? Such paragraphs render position:relative so
+// the absolutely-positioned image is placed relative to them.
+function hasAnchoredDrawing(p: Paragraph): boolean {
+  return p.children.some((n) => n.type === "drawing" && n.anchored && (n.anchorXEmu != null || n.anchorYEmu != null));
 }
 
 function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
@@ -59,7 +76,7 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
     const eff = effectiveParagraphProps(ctx.sheet, ctx.numbering, b.pPr);
     const marker = ctx.markers.get(b);
     return (
-      <p key={key} style={{ margin: 0, ...paragraphCss(eff) }}>
+      <p key={key} style={{ margin: 0, ...paragraphCss(eff), ...(hasAnchoredDrawing(b) ? { position: "relative" } : null) }}>
         {marker !== undefined && <span style={{ ...runCss(markerRunProps(ctx.sheet, ctx.numbering, b.pPr)), marginRight: "0.4em" }}>{marker}</span>}
         {b.children.length ? b.children.map((n, i) => <Inline key={i} node={n} paraPPr={b.pPr} ctx={ctx} />) : <br />}
       </p>
