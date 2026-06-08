@@ -24,6 +24,7 @@ interface Ctx {
   numbering: Numbering;
   markers: Map<Paragraph, string>;
   pkg: DocxPackage;
+  relsPart: string;   // rels file images/links in this container resolve against (body vs header/footer)
 }
 
 const renderText = (text: string): React.ReactNode[] => {
@@ -44,12 +45,12 @@ function Inline({ node, paraPPr, ctx }: { node: Inline; paraPPr: Paragraph["pPr"
     return <span style={node.track ? { ...css, ...trackCss(node.track.type) } : css}>{renderText(node.text)}</span>;
   }
   if (node.type === "hyperlink") {
-    const href = node.rId ? relationshipTarget(ctx.pkg, node.rId) : node.anchor ? `#${node.anchor}` : undefined;
+    const href = node.rId ? relationshipTarget(ctx.pkg, node.rId, ctx.relsPart) : node.anchor ? `#${node.anchor}` : undefined;
     return <a href={href} style={{ color: "#0563C1", textDecoration: "underline" }}>{node.children.map((c, i) => <Inline key={i} node={c} paraPPr={paraPPr} ctx={ctx} />)}</a>;
   }
   if (node.type === "footnoteRef") return <sup style={{ color: "#1C5742", fontSize: "0.7em" }}>{node.id}</sup>;
   if (node.type === "math") return <span dangerouslySetInnerHTML={{ __html: ommlToMathML(node.omml) }} />;
-  const src = node.rEmbed ? resolveImageDataUrl(ctx.pkg, node.rEmbed) : undefined;
+  const src = node.rEmbed ? resolveImageDataUrl(ctx.pkg, node.rEmbed, ctx.relsPart) : undefined;
   return src ? <img src={src} alt={node.alt ?? ""} style={drawingCss(node.widthEmu, node.heightEmu)} /> : null;
 }
 
@@ -82,7 +83,7 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
 }
 
 export function PaginatedDocxView({ pkg }: { pkg: DocxPackage }): React.ReactElement {
-  const { blocks, header, footer, ctx, geo } = useMemo(() => {
+  const { blocks, header, footer, ctx, headerCtx, footerCtx, geo } = useMemo(() => {
     const model = parseDocument(getPartText(pkg, "word/document.xml") ?? "");
     const sheet = parseStyles(getPartText(pkg, "word/styles.xml") ?? "");
     const numbering = parseNumbering(getPartText(pkg, "word/numbering.xml") ?? "");
@@ -94,14 +95,20 @@ export function PaginatedDocxView({ pkg }: { pkg: DocxPackage }): React.ReactEle
     const pageHeight = twipsToPx(sec?.pageSize?.height ?? 16838);
     const footerReserve = 28;
     const geo = { pageWidth, pageHeight, padTop, padRight, padBottom, padLeft, contentWidth: pageWidth - padLeft - padRight, contentHeight: pageHeight - padTop - padBottom - footerReserve };
-    const header = parseContainer(headerXml(pkg, model.section) ?? "", "w:hdr");
-    const footer = parseContainer(footerXml(pkg, model.section) ?? "", "w:ftr");
-    return { blocks: model.body, header, footer, ctx: { sheet, numbering, markers, pkg } as Ctx, geo };
+    const hx = headerXml(pkg, model.section);
+    const fx = footerXml(pkg, model.section);
+    const header = parseContainer(hx?.xml ?? "", "w:hdr");
+    const footer = parseContainer(fx?.xml ?? "", "w:ftr");
+    const ctx: Ctx = { sheet, numbering, markers, pkg, relsPart: "word/_rels/document.xml.rels" };
+    // Header/footer images resolve against THEIR part's rels (header1.xml.rels), not the body's.
+    const headerCtx: Ctx = { ...ctx, relsPart: hx?.relsPart ?? ctx.relsPart };
+    const footerCtx: Ctx = { ...ctx, relsPart: fx?.relsPart ?? ctx.relsPart };
+    return { blocks: model.body, header, footer, ctx, headerCtx, footerCtx, geo };
   }, [pkg]);
 
   const blockNodes = useMemo(() => blocks.map((b, i) => renderBlock(b, ctx, i)), [blocks, ctx]);
-  const headerNodes = useMemo(() => header.map((b, i) => renderBlock(b, ctx, 10000 + i)), [header, ctx]);
-  const footerNodes = useMemo(() => footer.map((b, i) => renderBlock(b, ctx, 20000 + i)), [footer, ctx]);
+  const headerNodes = useMemo(() => header.map((b, i) => renderBlock(b, headerCtx, 10000 + i)), [header, headerCtx]);
+  const footerNodes = useMemo(() => footer.map((b, i) => renderBlock(b, footerCtx, 20000 + i)), [footer, footerCtx]);
   const measureRef = useRef<HTMLDivElement | null>(null);
   const [layout, setLayout] = useState<{ breaks: number[]; total: number } | null>(null);
 

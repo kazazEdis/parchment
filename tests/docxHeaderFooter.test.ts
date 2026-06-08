@@ -31,14 +31,14 @@ describe("headerFooter: resolve + parse", () => {
   const model = parseDocument(getPartText(p, "word/document.xml")!);
 
   it("resolves the section's header/footer part XML", () => {
-    expect(headerXml(p, model.section)).toContain("ACME — Offer");
-    expect(footerXml(p, model.section)).toContain("Confidential");
+    expect(headerXml(p, model.section)?.xml).toContain("ACME — Offer");
+    expect(footerXml(p, model.section)?.xml).toContain("Confidential");
   });
 
   it("parseContainer parses header/footer blocks", () => {
-    const hdr = parseContainer(headerXml(p, model.section)!, "w:hdr");
+    const hdr = parseContainer(headerXml(p, model.section)!.xml, "w:hdr");
     expect(paragraphText(hdr[0] as P)).toBe("ACME — Offer");
-    const ftr = parseContainer(footerXml(p, model.section)!, "w:ftr");
+    const ftr = parseContainer(footerXml(p, model.section)!.xml, "w:ftr");
     expect(paragraphText(ftr[0] as P)).toBe("Confidential");
   });
 

@@ -10,9 +10,18 @@ const MIME: Record<string, string> = {
   svg: "image/svg+xml", emf: "image/emf", wmf: "image/wmf", tiff: "image/tiff", tif: "image/tiff",
 };
 
-/** The Target of a relationship by Id, from word/_rels/document.xml.rels (e.g. for hyperlinks). */
-export function relationshipTarget(pkg: DocxPackage, relId: string): string | undefined {
-  const rels = getPartText(pkg, "word/_rels/document.xml.rels");
+/** The _rels part path for an OPC part, e.g. "word/header1.xml" → "word/_rels/header1.xml.rels". */
+export function relsPathFor(partPath: string): string {
+  const i = partPath.lastIndexOf("/");
+  const dir = i >= 0 ? partPath.slice(0, i) : "";
+  const file = i >= 0 ? partPath.slice(i + 1) : partPath;
+  return `${dir ? dir + "/" : ""}_rels/${file}.rels`;
+}
+
+/** The Target of a relationship by Id. Defaults to the document body's rels; pass `relsPart` (e.g.
+ *  `relsPathFor("word/header1.xml")`) to resolve images/links referenced from a header/footer part. */
+export function relationshipTarget(pkg: DocxPackage, relId: string, relsPart = "word/_rels/document.xml.rels"): string | undefined {
+  const rels = getPartText(pkg, relsPart);
   if (!rels) return undefined;
   for (const rel of findElements(rels, "Relationship")) {
     if (getAttr(rel.openTag, "Id") === relId) return getAttr(rel.openTag, "Target");
@@ -30,9 +39,10 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-/** Resolve a blip relationship id to a `data:` URL, or undefined if it can't be found. */
-export function resolveImageDataUrl(pkg: DocxPackage, relId: string): string | undefined {
-  const target = relationshipTarget(pkg, relId);
+/** Resolve a blip relationship id to a `data:` URL, or undefined if it can't be found. `relsPart`
+ *  selects the rels file (default body); header/footer callers pass their part's rels. */
+export function resolveImageDataUrl(pkg: DocxPackage, relId: string, relsPart?: string): string | undefined {
+  const target = relationshipTarget(pkg, relId, relsPart);
   if (!target) return undefined;
   const path = target.startsWith("/") ? target.slice(1) : `word/${target}`;
   const part = getPart(pkg, path);
