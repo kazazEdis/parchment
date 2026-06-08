@@ -39,6 +39,38 @@ import { fromPackage, allParagraphs, replaceText, acceptAllChanges, rejectAllCha
 const isPureRuns = (p: Paragraph): boolean => p.children.length > 0 && p.children.every((n) => n.type === "run");
 const renderRunText = (text: string): string => text.replace(/\t/g, "    ");
 
+// Scoped toolbar styling (real :hover / :active / :disabled states, uniform icon buttons, grouped
+// clusters). Kept as one injected stylesheet so the package stays dependency-free (no CSS file to
+// import) while looking like a proper editor chrome rather than a flat row of beige buttons.
+const PML_TOOLBAR_CSS = `
+.pml-editor{font:13px/1.3 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#2b2b2b}
+.pml-tb{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:3px;padding:6px 10px;background:#fff;border-bottom:1px solid #e6e1d6;box-shadow:0 1px 0 rgba(0,0,0,.02)}
+.pml-grp{display:flex;align-items:center;gap:2px}
+.pml-sep{width:1px;align-self:stretch;margin:3px 5px;background:#e6e1d6}
+.pml-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:32px;height:32px;padding:0 8px;border:1px solid transparent;background:transparent;border-radius:7px;cursor:pointer;color:#2b2b2b;font:inherit;line-height:1;transition:background .12s,border-color .12s,box-shadow .12s}
+.pml-btn:hover:not(:disabled){background:#F4F0E7}
+.pml-btn:active:not(:disabled){background:#e8e2d4}
+.pml-btn:focus-visible{outline:none;box-shadow:0 0 0 2px rgba(28,87,66,.35)}
+.pml-btn:disabled{opacity:.35;cursor:default}
+.pml-ico{font-size:16px;line-height:1}
+.pml-text{padding:0 10px;font-size:12.5px;font-weight:500;color:#3a3a3a}
+.pml-b{font-weight:700;font-size:14px}
+.pml-i{font-style:italic;font-family:Georgia,serif;font-size:14px}
+.pml-u{text-decoration:underline;font-size:14px}
+.pml-ai{font-weight:600;color:#1C5742}
+.pml-ai:hover:not(:disabled){background:#1C57420f}
+.pml-field{height:32px;border:1px solid #d8d2c4;border-radius:7px;padding:0 9px;font:inherit;background:#fff;color:#2b2b2b}
+.pml-field::placeholder{color:#a9a193}
+.pml-field:focus{outline:none;border-color:#1C5742;box-shadow:0 0 0 2px rgba(28,87,66,.12)}
+.pml-chk{display:inline-flex;align-items:center;gap:5px;padding:0 7px;height:32px;color:#5b635f;white-space:nowrap;cursor:pointer}
+.pml-chk input{cursor:pointer}
+.pml-status{color:#8a8378;font-size:12px;margin-right:4px;white-space:nowrap}
+.pml-primary{background:#1C5742;color:#fff;border-color:#1C5742;font-weight:600;padding:0 14px}
+.pml-primary:hover:not(:disabled){background:#16442f}
+.pml-primary:active:not(:disabled){background:#103625}
+.pml-stage{background:#ECEAE3;padding:32px 24px;min-height:70vh;display:flex;gap:16px;justify-content:center}
+`;
+
 // ── live-DOM ↔ model helpers ──────────────────────────────────────────────────────────────────
 
 /** Reconstruct a paragraph's runs from its contentEditable DOM (formatting-preserving). */
@@ -573,65 +605,95 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
     );
   };
 
-  const btn: React.CSSProperties = { font: "13px system-ui", padding: "4px 9px", border: "1px solid #cdc8bd", background: "#fff", borderRadius: 5, cursor: "pointer" };
   const md = (e: React.MouseEvent) => e.preventDefault(); // keep selection/focus on toolbar click
-  const sep = <span style={{ width: 1, height: 18, background: "#d8d2c4" }} />;
+  const sep = <span className="pml-sep" />;
+  // Three crisp alignment glyphs (SVG) — far cleaner than the old ⯇/≡/⯈ arrows.
+  const alignIcon = (which: "left" | "center" | "right") => {
+    const rows: Record<typeof which, [number, number][]> = {
+      left:   [[2, 13], [2, 9], [2, 12]],
+      center: [[3, 13], [5, 11], [4, 12]],
+      right:  [[3, 14], [7, 14], [4, 14]],
+    } as any;
+    return (
+      <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+        <g stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          {rows[which].map(([x1, x2], i) => <line key={i} x1={x1} y1={4 + i * 4} x2={x2} y2={4 + i * 4} />)}
+        </g>
+      </svg>
+    );
+  };
 
   return (
-    <div style={{ font: "13px system-ui, sans-serif" }} onKeyDown={onKeyDown}>
-      <div style={{ position: "sticky", top: 0, zIndex: 5, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", padding: 8, background: "#F6F2EA", borderBottom: "1px solid #e0dacd" }}>
-        <button style={btn} onMouseDown={md} onClick={() => dispatch({ type: "undo" })} disabled={!state.past.length} title="Undo (Ctrl+Z)">↶</button>
-        <button style={btn} onMouseDown={md} onClick={() => dispatch({ type: "redo" })} disabled={!state.future.length} title="Redo (Ctrl+Y)">↷</button>
+    <div className="pml-editor" onKeyDown={onKeyDown}>
+      <style>{PML_TOOLBAR_CSS}</style>
+      <div className="pml-tb">
+        <div className="pml-grp">
+          <button className="pml-btn" onMouseDown={md} onClick={() => dispatch({ type: "undo" })} disabled={!state.past.length} title="Undo (Ctrl+Z)"><span className="pml-ico">↶</span></button>
+          <button className="pml-btn" onMouseDown={md} onClick={() => dispatch({ type: "redo" })} disabled={!state.future.length} title="Redo (Ctrl+Y)"><span className="pml-ico">↷</span></button>
+        </div>
         {sep}
-        <button style={{ ...btn, fontWeight: "bold" }} onMouseDown={md} onClick={onBold}>B</button>
-        <button style={{ ...btn, fontStyle: "italic" }} onMouseDown={md} onClick={onItalic}>I</button>
-        <button style={{ ...btn, textDecoration: "underline" }} onMouseDown={md} onClick={onUnderline}>U</button>
+        <div className="pml-grp">
+          <button className="pml-btn pml-b" onMouseDown={md} onClick={onBold} title="Bold (Ctrl+B)">B</button>
+          <button className="pml-btn pml-i" onMouseDown={md} onClick={onItalic} title="Italic (Ctrl+I)">I</button>
+          <button className="pml-btn pml-u" onMouseDown={md} onClick={onUnderline} title="Underline (Ctrl+U)">U</button>
+        </div>
         {sep}
-        <button style={btn} onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "left"))}>⯇</button>
-        <button style={btn} onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "center"))}>≡</button>
-        <button style={btn} onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "right"))}>⯈</button>
+        <div className="pml-grp">
+          <button className="pml-btn" onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "left"))} title="Align left">{alignIcon("left")}</button>
+          <button className="pml-btn" onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "center"))} title="Align center">{alignIcon("center")}</button>
+          <button className="pml-btn" onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "right"))} title="Align right">{alignIcon("right")}</button>
+        </div>
         {sep}
-        <input placeholder="Find" value={find} onChange={(e) => setFind(e.target.value)} style={{ ...btn, cursor: "text", width: 84 }} />
-        <input placeholder="Replace" value={replace} onChange={(e) => setReplace(e.target.value)} style={{ ...btn, cursor: "text", width: 84 }} />
-        <button style={btn} onClick={doReplace}>Replace all</button>
+        <div className="pml-grp">
+          <input className="pml-field" placeholder="Find" value={find} onChange={(e) => setFind(e.target.value)} style={{ width: 90 }} />
+          <input className="pml-field" placeholder="Replace" value={replace} onChange={(e) => setReplace(e.target.value)} style={{ width: 90 }} />
+          <button className="pml-btn pml-text" onClick={doReplace}>Replace</button>
+        </div>
         {sep}
-        <label style={{ display: "flex", alignItems: "center", gap: 4 }}><input type="checkbox" checked={track} onChange={(e) => setTrack(e.target.checked)} /> Track changes</label>
-        <button style={btn} onClick={() => commit((d) => acceptAllChanges(d))}>Accept all</button>
-        <button style={btn} onClick={() => commit((d) => rejectAllChanges(d))}>Reject all</button>
-        <button
-          style={btn}
-          onMouseDown={md}
-          title="Comment on the active paragraph"
-          onClick={() => {
-            if (activeIndex == null) return;
-            const sel = currentSelection(); // capture before the modal prompt collapses it
-            const text = window.prompt("Comment:");
-            if (!text) return;
-            if (sel && sel.index === activeIndex && sel.end > sel.start) {
-              const s = sel;
-              commit((d) => addCommentToRange(d, s.index, s.start, s.end, { author: "You", text }));
-            } else {
-              commit((d) => addCommentToParagraph(d, activeIndex, { author: "You", text }));
-            }
-          }}
-        >💬 Comment</button>
+        <div className="pml-grp">
+          <label className="pml-chk" title="Record edits as tracked changes"><input type="checkbox" checked={track} onChange={(e) => setTrack(e.target.checked)} /> Track</label>
+          <button className="pml-btn pml-text" onClick={() => commit((d) => acceptAllChanges(d))} title="Accept all tracked changes">Accept</button>
+          <button className="pml-btn pml-text" onClick={() => commit((d) => rejectAllChanges(d))} title="Reject all tracked changes">Reject</button>
+          <button
+            className="pml-btn"
+            onMouseDown={md}
+            title="Comment on the active paragraph"
+            onClick={() => {
+              if (activeIndex == null) return;
+              const sel = currentSelection(); // capture before the modal prompt collapses it
+              const text = window.prompt("Comment:");
+              if (!text) return;
+              if (sel && sel.index === activeIndex && sel.end > sel.start) {
+                const s = sel;
+                commit((d) => addCommentToRange(d, s.index, s.start, s.end, { author: "You", text }));
+              } else {
+                commit((d) => addCommentToParagraph(d, activeIndex, { author: "You", text }));
+              }
+            }}
+          ><span className="pml-ico">🗨</span></button>
+        </div>
         {sep}
-        {onAiRewrite && <button style={btn} onMouseDown={md} onClick={() => void onAi()} title="AI: rewrite the selection">✨ AI</button>}
-        <button style={btn} onMouseDown={md} onClick={() => fileInputRef.current?.click()} title="Insert image into the active paragraph">🖼 Image</button>
-        <button style={btn} onMouseDown={md} onClick={onAddLink} title="Hyperlink the selection">🔗 Link</button>
-        <button style={btn} onMouseDown={md} onClick={() => tableOp(insertRowAfter)} title="Add a row (in a table)">+Row</button>
-        <button style={btn} onMouseDown={md} onClick={() => tableOp(deleteRow)} title="Delete the row">−Row</button>
-        <button style={btn} onMouseDown={md} onClick={() => tableOp((x, t) => appendColumn(x, t))} title="Add a column">+Col</button>
-        <button style={btn} onMouseDown={md} onClick={() => tableOp((x, t) => deleteColumn(x, t, 0))} title="Delete the first column">−Col</button>
+        <div className="pml-grp">
+          {onAiRewrite && <button className="pml-btn pml-ai" onMouseDown={md} onClick={() => void onAi()} title="AI: rewrite the selection">✦ AI</button>}
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => fileInputRef.current?.click()} title="Insert image into the active paragraph">Image</button>
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={onAddLink} title="Hyperlink the selection">Link</button>
+        </div>
+        {sep}
+        <div className="pml-grp" title="Table (inside a table cell)">
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp(insertRowAfter)} title="Add a row">+Row</button>
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp(deleteRow)} title="Delete the row">−Row</button>
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp((x, t) => appendColumn(x, t))} title="Add a column">+Col</button>
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp((x, t) => deleteColumn(x, t, 0))} title="Delete the first column">−Col</button>
+        </div>
         <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void onInsertImage(f); e.target.value = ""; }} />
         <span style={{ flex: 1 }} />
-        <span style={{ color: "#5b635f" }}>{status}</span>
-        <button style={{ ...btn, background: "#1C5742", color: "#fff", borderColor: "#1C5742" }} onClick={download}>Download .docx</button>
+        {status && <span className="pml-status">{status}</span>}
+        <button className="pml-btn pml-primary" onClick={download} title="Download the edited .docx">Download .docx</button>
       </div>
 
-      <div style={{ background: "#e9e6df", padding: 24, minHeight: "70vh", display: "flex", gap: 16, justifyContent: "center" }}>
+      <div className="pml-stage">
         <div ref={canvasWrapRef} style={{ position: "relative" }}>
-          <div id="docx-editor-canvas" style={{ width: page.width, background: "#fff", boxShadow: "0 1px 6px rgba(0,0,0,0.15)", padding: page.padding, boxSizing: "border-box", fontFamily: "Calibri, Carlito, sans-serif", fontSize: "11pt", lineHeight: 1.15, color: "#000" }}>
+          <div id="docx-editor-canvas" style={{ width: page.width, background: "#fff", boxShadow: "0 2px 12px rgba(0,0,0,0.12)", borderRadius: 2, padding: page.padding, boxSizing: "border-box", fontFamily: "Calibri, Carlito, sans-serif", fontSize: "11pt", lineHeight: 1.15, color: "#000" }}>
             {doc.model.body.map((b, i) => renderBlock(b, i))}
           </div>
           {cursorRects.map((c) => (
