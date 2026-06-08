@@ -25,6 +25,7 @@ interface Ctx {
   markers: Map<Paragraph, string>;
   pkg: DocxPackage;
   relsPart: string;   // rels file images/links in this container resolve against (body vs header/footer)
+  page?: { num: number; total: number };   // current/total page, for live PAGE/NUMPAGES field runs (footer)
 }
 
 const renderText = (text: string): React.ReactNode[] => {
@@ -42,7 +43,9 @@ const renderText = (text: string): React.ReactNode[] => {
 function Inline({ node, paraPPr, ctx }: { node: Inline; paraPPr: Paragraph["pPr"]; ctx: Ctx }): React.ReactElement | null {
   if (node.type === "run") {
     const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, paraPPr, node.rPr));
-    return <span style={node.track ? { ...css, ...trackCss(node.track.type) } : css}>{renderText(node.text)}</span>;
+    // Live page-number fields (footer): show the current/total page, not the stale cached text.
+    const text = node.field && ctx.page ? String(node.field === "PAGE" ? ctx.page.num : ctx.page.total) : node.text;
+    return <span style={node.track ? { ...css, ...trackCss(node.track.type) } : css}>{renderText(text)}</span>;
   }
   if (node.type === "hyperlink") {
     const href = node.rId ? relationshipTarget(ctx.pkg, node.rId, ctx.relsPart) : node.anchor ? `#${node.anchor}` : undefined;
@@ -125,7 +128,6 @@ export function PaginatedDocxView({ pkg }: { pkg: DocxPackage }): React.ReactEle
 
   const blockNodes = useMemo(() => blocks.map((b, i) => renderBlock(b, ctx, i)), [blocks, ctx]);
   const headerNodes = useMemo(() => header.map((b, i) => renderBlock(b, headerCtx, 10000 + i)), [header, headerCtx]);
-  const footerNodes = useMemo(() => footer.map((b, i) => renderBlock(b, footerCtx, 20000 + i)), [footer, footerCtx]);
   const measureRef = useRef<HTMLDivElement | null>(null);
   const [layout, setLayout] = useState<{ breaks: number[]; total: number } | null>(null);
 
@@ -168,10 +170,15 @@ export function PaginatedDocxView({ pkg }: { pkg: DocxPackage }): React.ReactEle
             <div style={{ height: Math.min(endY - startY, geo.contentHeight), overflow: "hidden" }}>
               <div style={{ transform: `translateY(${-startY}px)`, width: geo.contentWidth }}>{blockNodes}</div>
             </div>
-            {footerNodes.length > 0 && (
-              <div style={{ position: "absolute", bottom: Math.max(24, geo.padBottom / 3), left: geo.padLeft, right: geo.padRight, fontSize: "10pt", color: "#555" }}>{footerNodes}</div>
+            {footer.length > 0 ? (
+              // Render the docx footer PER PAGE so PAGE/NUMPAGES field runs resolve to this page.
+              <div style={{ position: "absolute", bottom: Math.max(24, geo.padBottom / 3), left: geo.padLeft, right: geo.padRight, fontSize: "10pt", color: "#555" }}>
+                {footer.map((b, i) => renderBlock(b, { ...footerCtx, page: { num: pi + 1, total: layout.breaks.length } }, 20000 + i))}
+              </div>
+            ) : (
+              // No docx footer → a minimal page-number stamp so the page is still numbered.
+              <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, textAlign: "center", fontSize: "9pt", color: "#777" }}>{pi + 1} / {layout.breaks.length}</div>
             )}
-            <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, textAlign: "center", fontSize: "9pt", color: "#777" }}>{pi + 1} / {layout.breaks.length}</div>
           </div>
         );
       })}

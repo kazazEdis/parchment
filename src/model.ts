@@ -32,6 +32,9 @@ export interface Run {
   text: string;
   /** Present when this run sits inside a tracked insertion/deletion (w:ins/w:del). */
   track?: TrackChange;
+  /** This run is the result of a PAGE/NUMPAGES field — the paginated view substitutes the live
+   *  current-page / total-page number per page (the parsed `text` is the stale cached value). */
+  field?: "PAGE" | "NUMPAGES";
 }
 
 export interface Drawing {
@@ -145,7 +148,13 @@ function parseBlocks(xml: string, from: number, to: number): Block[] {
     const ln = localName(el.name);
     if (ln === "p") out.push(parseParagraph(xml, el));
     else if (ln === "tbl") out.push(parseTable(xml, el));
-    // sectPr (handled separately), bookmarkStart/End, sdt at block level → skipped in v1
+    else if (ln === "sdt") {
+      // Block-level structured-document-tag (content control): unwrap its w:sdtContent and parse
+      // the blocks inside (Word commonly wraps a header/footer's content in one).
+      const content = findElement(xml, "w:sdtContent", { from: el.innerStart, to: el.innerEnd });
+      if (content) for (const b of parseBlocks(xml, content.innerStart, content.innerEnd)) out.push(b);
+    }
+    // sectPr (handled separately), bookmarkStart/End → skipped in v1
   }
   return out;
 }
@@ -165,11 +174,35 @@ function trackOf(el: ElementSpan, type: "ins" | "del"): TrackChange {
   return { type, id: getAttr(el.openTag, "w:id"), author: getAttr(el.openTag, "w:author"), date: getAttr(el.openTag, "w:date") };
 }
 
+// Classify a field instruction string → the field kind we substitute live (else undefined).
+function fieldKind(instr: string): "PAGE" | "NUMPAGES" | undefined {
+  return /NUMPAGES/i.test(instr) ? "NUMPAGES" : /\bPAGE\b/i.test(instr) ? "PAGE" : undefined;
+}
+
 function parseInlines(xml: string, from: number, to: number, track?: TrackChange): Inline[] {
   const out: Inline[] = [];
+  // Complex-field state (spans sibling runs): begin → instrText → separate → RESULT runs → end.
+  let fldInstr: string | null = null;   // accumulated instruction while inside a field, else null
+  let fldInResult = false;              // true between `separate` and `end` (the displayed value)
   for (const el of childElements(xml, from, to)) {
     const ln = localName(el.name);
-    if (ln === "r") parseRunInto(xml, el, out, track);
+    if (ln === "r") {
+      const runXml = inner(xml, el);
+      const fc = findElement(runXml, "w:fldChar");
+      if (fc) {
+        const t = getAttr(fc.openTag, "w:fldCharType");
+        if (t === "begin") { fldInstr = ""; fldInResult = false; }
+        else if (t === "separate") fldInResult = true;
+        else if (t === "end") { fldInstr = null; fldInResult = false; }
+        continue; // field-control run has no rendered text
+      }
+      const instr = findElement(runXml, "w:instrText");
+      if (instr && fldInstr !== null) { fldInstr += inner(runXml, instr); continue; }
+      const before = out.length;
+      parseRunInto(xml, el, out, track);
+      const kind = fldInResult && fldInstr ? fieldKind(fldInstr) : undefined;
+      if (kind) for (let i = before; i < out.length; i++) { const r = out[i]; if (r.type === "run") r.field = kind; }
+    }
     else if (ln === "hyperlink") {
       out.push({
         type: "hyperlink",
@@ -181,8 +214,12 @@ function parseInlines(xml: string, from: number, to: number, track?: TrackChange
       // Tracked change: tag the contained runs with the revision metadata.
       for (const c of parseInlines(xml, el.innerStart, el.innerEnd, trackOf(el, ln))) out.push(c);
     } else if (ln === "smartTag" || ln === "sdt" || ln === "fldSimple") {
-      // Unwrap wrappers + simple fields → their cached result runs render as content.
-      for (const c of parseInlines(xml, el.innerStart, el.innerEnd, track)) out.push(c);
+      // Unwrap wrappers + simple fields → their cached result runs render as content. A simple
+      // PAGE/NUMPAGES field tags its result runs so the paginated view substitutes live numbers.
+      const kids = parseInlines(xml, el.innerStart, el.innerEnd, track);
+      const fk = ln === "fldSimple" ? fieldKind(getAttr(el.openTag, "w:instr") ?? "") : undefined;
+      if (fk) for (const c of kids) if (c.type === "run") c.field = fk;
+      for (const c of kids) out.push(c);
     } else if (ln === "oMath") {
       out.push({ type: "math", omml: xml.slice(el.outerStart, el.outerEnd) });
     }
