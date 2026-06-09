@@ -225,15 +225,21 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
   useLayoutEffect(() => {
     const root = measureRef.current;
     if (!root) return;
-    const top = root.getBoundingClientRect().top;
+    const rootRect = root.getBoundingClientRect();
+    // getBoundingClientRect/getClientRects return POST-transform sizes. A host (e.g. a fit-to-pane
+    // preview) may wrap us in transform:scale(), which would shrink every measurement → a too-small
+    // first-page push-down (body overlaps the header) and wrong page breaks. The measurer is laid out
+    // at geo.contentWidth, so rect.width / contentWidth recovers the applied scale; divide it back out.
+    const scale = rootRect.width > 0 ? rootRect.width / geo.contentWidth : 1;
+    const top = rootRect.top;
     const bottoms = new Set<number>();
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const range = document.createRange();
       range.selectNodeContents(n);
-      for (const r of Array.from(range.getClientRects())) bottoms.add(Math.round(r.bottom - top));
+      for (const r of Array.from(range.getClientRects())) bottoms.add(Math.round((r.bottom - top) / scale));
     }
-    root.querySelectorAll(":scope > *").forEach((el) => bottoms.add(Math.round(el.getBoundingClientRect().bottom - top)));
+    root.querySelectorAll(":scope > *").forEach((el) => bottoms.add(Math.round((el.getBoundingClientRect().bottom - top) / scale)));
     const sorted = [...bottoms].filter((b) => b > 0).sort((a, b) => a - b);
     // How far the first-page header pokes below the normal top margin. The logo band usually fits the
     // top-margin slack, so the page-1 body is only NUDGED down by this (into the same slack) — page 1
@@ -241,7 +247,7 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
     // Clamp so a very tall header can't push the body into the footer.
     let firstExtra = 0;
     if (usesFirstHeader && firstHeaderRef.current) {
-      const hH = firstHeaderRef.current.getBoundingClientRect().height;
+      const hH = firstHeaderRef.current.getBoundingClientRect().height / scale;
       firstExtra = Math.min(geo.padBottom, Math.max(0, Math.round(geo.headerTop + hH + 6 - geo.padTop)));
     }
     setLayout({ breaks: computePageBreaks(sorted, geo.contentHeight), total: root.scrollHeight, firstExtra });
