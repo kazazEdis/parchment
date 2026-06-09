@@ -206,8 +206,15 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
     ensureFontsInjected();
     let live = true;
     const fonts = (document as any).fonts;
-    if (fonts?.ready) fonts.ready.then(() => { if (live) setFontsReady(true); });
-    else setFontsReady(true);
+    // EXPLICITLY load Carlito (both weights) before flipping fontsReady → re-measure. @font-face is
+    // lazy, so `fonts.ready` can resolve BEFORE Carlito is even requested; measuring then uses the
+    // fallback's (shorter) header height → too small a first-page push-down → the body overlaps the
+    // header. Forcing the load makes the re-measure see the real Carlito metrics.
+    if (fonts?.load) {
+      Promise.all([fonts.load("400 12pt Carlito"), fonts.load("700 12pt Carlito")])
+        .catch(() => {})
+        .then(() => { if (live) setFontsReady(true); });
+    } else setFontsReady(true);
     return () => { live = false; };
   }, []);
 
