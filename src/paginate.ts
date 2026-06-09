@@ -15,13 +15,15 @@
  * without cutting a line in half. A single line taller than a page gets its own page (force-progress).
  * Render each page as a fixed `contentHeight` window of the flow translated by `-breaks[i]`.
  */
-export function computePageBreaks(lineBottoms: number[], contentHeight: number): number[] {
+export function computePageBreaks(lineBottoms: number[], contentHeight: number, firstContentHeight = contentHeight): number[] {
   if (lineBottoms.length === 0 || contentHeight <= 0) return [0];
   const breaks = [0];
   let start = 0;
   let i = 0;
   while (i < lineBottoms.length) {
-    const limit = start + contentHeight;
+    // The first page may be shorter (a tall first-page header — e.g. a logo letterhead — reserves
+    // vertical space the body must clear). Every later page uses the full content height.
+    const limit = start + (breaks.length === 1 ? Math.max(1, firstContentHeight) : contentHeight);
     let last = i;
     while (last < lineBottoms.length && lineBottoms[last] <= limit) last++;
     if (last === i) last = i + 1; // oversized line → force one line onto the page

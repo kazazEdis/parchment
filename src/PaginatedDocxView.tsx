@@ -141,7 +141,7 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
   headerOverride?: React.ReactNode;
   footerOverride?: React.ReactNode;
 }): React.ReactElement {
-  const { blocks, header, footer, ctx, headerCtx, footerCtx, geo } = useMemo(() => {
+  const { blocks, headerDefault, headerFirst, footer, hasTitlePage, ctx, headerCtxDefault, headerCtxFirst, footerCtx, geo } = useMemo(() => {
     const model = parseDocument(getPartText(pkg, "word/document.xml") ?? "");
     const sheet = parseStyles(getPartText(pkg, "word/styles.xml") ?? "");
     const numbering = parseNumbering(getPartText(pkg, "word/numbering.xml") ?? "");
@@ -152,25 +152,42 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
     const pageWidth = twipsToPx(sec?.pageSize?.width ?? 11906);
     const pageHeight = twipsToPx(sec?.pageSize?.height ?? 16838);
     const footerReserve = 28;
-    const geo = { pageWidth, pageHeight, padTop, padRight, padBottom, padLeft, contentWidth: pageWidth - padLeft - padRight, contentHeight: pageHeight - padTop - padBottom - footerReserve };
-    const hx = headerXml(pkg, model.section);
+    const headerTop = Math.max(8, padTop / 3);   // where the header band starts (mirrors the render below)
+    const geo = { pageWidth, pageHeight, padTop, padRight, padBottom, padLeft, headerTop, contentWidth: pageWidth - padLeft - padRight, contentHeight: pageHeight - padTop - padBottom - footerReserve };
+    // Default header + (when the section has a title page) the distinct FIRST-page header — e.g. a
+    // logo letterhead shown only on page 1. parseContainer("") → [] so an absent ref is harmless.
+    const hxDefault = headerXml(pkg, model.section, "default");
+    const hxFirst = sec?.titlePage ? headerXml(pkg, model.section, "first") : undefined;
     const fx = footerXml(pkg, model.section);
-    const header = parseContainer(hx?.xml ?? "", "w:hdr");
-    const footer = parseContainer(fx?.xml ?? "", "w:ftr");
     const ctx: Ctx = { sheet, numbering, markers, pkg, relsPart: "word/_rels/document.xml.rels" };
     // Header/footer images resolve against THEIR part's rels (header1.xml.rels), not the body's.
-    const headerCtx: Ctx = { ...ctx, relsPart: hx?.relsPart ?? ctx.relsPart };
-    const footerCtx: Ctx = { ...ctx, relsPart: fx?.relsPart ?? ctx.relsPart };
-    return { blocks: model.body, header, footer, ctx, headerCtx, footerCtx, geo };
+    return {
+      blocks: model.body,
+      headerDefault: parseContainer(hxDefault?.xml ?? "", "w:hdr"),
+      headerFirst: hxFirst ? parseContainer(hxFirst.xml, "w:hdr") : [],
+      footer: parseContainer(fx?.xml ?? "", "w:ftr"),
+      hasTitlePage: !!sec?.titlePage,
+      ctx,
+      headerCtxDefault: { ...ctx, relsPart: hxDefault?.relsPart ?? ctx.relsPart } as Ctx,
+      headerCtxFirst: { ...ctx, relsPart: hxFirst?.relsPart ?? ctx.relsPart } as Ctx,
+      footerCtx: { ...ctx, relsPart: fx?.relsPart ?? ctx.relsPart } as Ctx,
+      geo,
+    };
   }, [pkg]);
 
   const blockNodes = useMemo(() => blocks.map((b, i) => renderBlock(b, ctx, i)), [blocks, ctx]);
-  const headerNodes = useMemo(() => header.map((b, i) => renderBlock(b, headerCtx, 10000 + i)), [header, headerCtx]);
+  const headerNodesDefault = useMemo(() => headerDefault.map((b, i) => renderBlock(b, headerCtxDefault, 10000 + i)), [headerDefault, headerCtxDefault]);
+  const headerNodesFirst = useMemo(() => headerFirst.map((b, i) => renderBlock(b, headerCtxFirst, 12000 + i)), [headerFirst, headerCtxFirst]);
+  // The first-page header (logo band) shown on page 1 only; falls back to the default when absent.
+  const usesFirstHeader = hasTitlePage && headerNodesFirst.length > 0;
   const measureRef = useRef<HTMLDivElement | null>(null);
-  const [layout, setLayout] = useState<{ breaks: number[]; total: number } | null>(null);
+  const firstHeaderRef = useRef<HTMLDivElement | null>(null);
+  const [layout, setLayout] = useState<{ breaks: number[]; total: number; firstExtra: number } | null>(null);
 
   // Measure every line's bottom-Y in the continuous flow (line-level breaks, the SuperDoc sliceLines
-  // idea); break on line boundaries so paragraphs split across pages without cutting a line.
+  // idea); break on line boundaries so paragraphs split across pages without cutting a line. Also
+  // measure the first-page header: when it's taller than the top-margin band it reserves extra space,
+  // so page 1 gets a shorter content height (firstExtra) and its body is pushed down to clear it.
   useLayoutEffect(() => {
     const root = measureRef.current;
     if (!root) return;
@@ -184,8 +201,17 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
     }
     root.querySelectorAll(":scope > *").forEach((el) => bottoms.add(Math.round(el.getBoundingClientRect().bottom - top)));
     const sorted = [...bottoms].filter((b) => b > 0).sort((a, b) => a - b);
-    setLayout({ breaks: computePageBreaks(sorted, geo.contentHeight), total: root.scrollHeight });
-  }, [blockNodes, geo.contentWidth, geo.contentHeight]);
+    // How far the first-page header pokes below the normal top margin. The logo band usually fits the
+    // top-margin slack, so the page-1 body is only NUDGED down by this (into the same slack) — page 1
+    // keeps its full content height, matching Word (which doesn't drop a row to show the letterhead).
+    // Clamp so a very tall header can't push the body into the footer.
+    let firstExtra = 0;
+    if (usesFirstHeader && firstHeaderRef.current) {
+      const hH = firstHeaderRef.current.getBoundingClientRect().height;
+      firstExtra = Math.min(geo.padBottom, Math.max(0, Math.round(geo.headerTop + hH + 6 - geo.padTop)));
+    }
+    setLayout({ breaks: computePageBreaks(sorted, geo.contentHeight), total: root.scrollHeight, firstExtra });
+  }, [blockNodes, headerNodesFirst, usesFirstHeader, geo.contentWidth, geo.contentHeight, geo.headerTop, geo.padTop]);
 
   return (
     <div style={{ background: "#e9e6df", padding: 24 }}>
@@ -193,21 +219,31 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
       <div ref={measureRef} style={{ position: "absolute", visibility: "hidden", left: -99999, top: 0, width: geo.contentWidth, fontFamily: "Calibri, Carlito, sans-serif", fontSize: "11pt", lineHeight: 1.15 }}>
         {blockNodes}
       </div>
+      {/* offscreen measurer for the first-page header (to reserve its height on page 1) */}
+      {usesFirstHeader && (
+        <div ref={firstHeaderRef} style={{ position: "absolute", visibility: "hidden", left: -99999, top: 0, width: geo.contentWidth, fontSize: "10pt" }}>
+          {headerNodesFirst}
+        </div>
+      )}
       {layout?.breaks.map((startY, pi) => {
         const endY = pi < layout.breaks.length - 1 ? layout.breaks[pi + 1] : layout.total;
+        const onFirst = pi === 0 && usesFirstHeader;              // page 1 shows the first-page header
+        const pageHeader = onFirst ? headerNodesFirst : headerNodesDefault;
+        const bodyExtra = pi === 0 ? layout.firstExtra : 0;       // nudge the page-1 body below the logo band
         return (
           <div
             key={pi}
             className="docx-page"
             style={{ width: geo.pageWidth, height: geo.pageHeight, margin: "0 auto 18px", background: "#fff", boxShadow: "0 1px 6px rgba(0,0,0,0.15)", boxSizing: "border-box", position: "relative", paddingTop: geo.padTop, paddingRight: geo.padRight, paddingBottom: geo.padBottom, paddingLeft: geo.padLeft, fontFamily: "Calibri, Carlito, sans-serif", fontSize: "11pt", lineHeight: 1.15, color: "#000", overflow: "hidden" }}
           >
-            {headerNodes.length > 0 ? (
-              <div style={{ position: "absolute", top: Math.max(8, geo.padTop / 3), left: geo.padLeft, right: geo.padRight, fontSize: "10pt", color: "#555" }}>{headerNodes}</div>
+            {pageHeader.length > 0 ? (
+              <div style={{ position: "absolute", top: geo.headerTop, left: geo.padLeft, right: geo.padRight, fontSize: "10pt", color: "#555" }}>{pageHeader}</div>
             ) : headerOverride ? (
-              <div style={{ position: "absolute", top: Math.max(8, geo.padTop / 3), left: geo.padLeft, right: geo.padRight }}>{headerOverride}</div>
+              <div style={{ position: "absolute", top: geo.headerTop, left: geo.padLeft, right: geo.padRight }}>{headerOverride}</div>
             ) : null}
-            {/* window clipped to this page's line slice; the same flow translated up by startY */}
-            <div style={{ height: Math.min(endY - startY, geo.contentHeight), overflow: "hidden" }}>
+            {/* window clipped to this page's line slice; the same flow translated up by startY. On page 1 a
+                tall first-page header pushes the body down by bodyExtra (and shortens its content height). */}
+            <div style={{ marginTop: bodyExtra, height: Math.min(endY - startY, geo.contentHeight), overflow: "hidden" }}>
               <div style={{ transform: `translateY(${-startY}px)`, width: geo.contentWidth }}>{blockNodes}</div>
             </div>
             {footer.length > 0 ? (

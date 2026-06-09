@@ -35,5 +35,14 @@ describe("paginate: computePageBreaks (line-level)", () => {
   it("handles empty input", () => {
     expect(computePageBreaks([], 100)).toEqual([0]);
   });
+
+  it("uses a shorter first page when given firstContentHeight (tall first-page header reserve)", () => {
+    // First page caps at 30 (only line 20 fits → break at 20); later pages cap at 50.
+    expect(computePageBreaks([20, 40, 60, 80, 100], 50, 30)).toEqual([0, 20, 60]);
+  });
+
+  it("firstContentHeight defaults to contentHeight (no special first page)", () => {
+    expect(computePageBreaks([20, 40, 60, 80, 100], 50)).toEqual([0, 40, 80]);
+  });
 });
 
