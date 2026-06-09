@@ -55,7 +55,21 @@ function Inline({ node, paraPPr, ctx }: { node: Inline; paraPPr: Paragraph["pPr"
   if (node.type === "math") return <span dangerouslySetInnerHTML={{ __html: ommlToMathML(node.omml) }} />;
   const src = node.rEmbed ? resolveImageDataUrl(ctx.pkg, node.rEmbed, ctx.relsPart) : undefined;
   if (!src) return null;
-  const img = <img src={src} alt={node.alt ?? ""} style={drawingCss(node.widthEmu, node.heightEmu)} />;
+  let img: React.ReactElement;
+  if (node.crop) {
+    // a:srcRect: show only the visible sub-region scaled into the extent box. Scale the full image so
+    // its visible fraction fills the box, clip with an overflow-hidden wrapper, and offset by the crop.
+    const { l, t, r, b } = node.crop;
+    const vw = Math.max(0.0001, 1 - l - r), vh = Math.max(0.0001, 1 - t - b);
+    const w = emuToPx(node.widthEmu ?? 0), h = emuToPx(node.heightEmu ?? 0);
+    img = (
+      <span style={{ display: "inline-block", width: w, height: h, overflow: "hidden", position: "relative", verticalAlign: "bottom" }}>
+        <img src={src} alt={node.alt ?? ""} style={{ position: "absolute", width: w / vw, height: h / vh, left: -(l / vw) * w, top: -(t / vh) * h, maxWidth: "none" }} />
+      </span>
+    );
+  } else {
+    img = <img src={src} alt={node.alt ?? ""} style={drawingCss(node.widthEmu, node.heightEmu)} />;
+  }
   // Anchored (floating) drawing → out of flow, absolutely positioned at its posOffset relative to the
   // paragraph (which renderBlock marks position:relative). Inline drawings render in flow as before.
   if (node.anchored && (node.anchorXEmu != null || node.anchorYEmu != null)) {

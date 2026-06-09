@@ -51,6 +51,9 @@ export interface Drawing {
   anchorXEmu?: number;
   anchorYEmu?: number;
   behindDoc?: boolean;
+  /** a:srcRect — fraction (0..1) cropped off each edge of the source image before it's scaled into
+   *  the extent box. Word uses this to show only a sub-region (e.g. a logo cut from a screenshot). */
+  crop?: { l: number; t: number; r: number; b: number };
 }
 
 export interface Hyperlink {
@@ -263,6 +266,16 @@ function parseRunInto(xml: string, el: ElementSpan, out: Inline[], track?: Track
   flush();
 }
 
+// a:srcRect l/t/r/b are ST_Percentage (100000 = 100%) cropped off each edge. Returns fractions, or
+// undefined when there's no crop (all edges 0 / element absent).
+function parseSrcRect(body: string): Drawing["crop"] {
+  const sr = findElement(body, "a:srcRect");
+  if (!sr) return undefined;
+  const f = (a: string): number => (parseFloat(getAttr(sr.openTag, a) ?? "0") || 0) / 100000;
+  const c = { l: f("l"), t: f("t"), r: f("r"), b: f("b") };
+  return c.l || c.t || c.r || c.b ? c : undefined;
+}
+
 function parseDrawing(xml: string, el: ElementSpan): Drawing {
   const body = inner(xml, el);
   const extent = findElement(body, "wp:extent");
@@ -292,6 +305,7 @@ function parseDrawing(xml: string, el: ElementSpan): Drawing {
     heightEmu: extent ? parseMeasure(getAttr(extent.openTag, "cy")) : undefined,
     alt: docPr ? (getAttr(docPr.openTag, "descr") ?? getAttr(docPr.openTag, "name")) : undefined,
     anchorXEmu, anchorYEmu, behindDoc,
+    crop: parseSrcRect(body),
   };
 }
 
