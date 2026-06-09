@@ -32,3 +32,4 @@ export * from "./encrypted";  // encrypted-docx detection
 export * from "./math";       // OMML → MathML
 export * from "./collab";     // collaboration transport (BroadcastChannel / pluggable)
 export * from "./crdt";       // CRDT collaboration (Yjs over document.xml)
+export * from "./fonts";      // embedded metric-compatible web fonts (Calibri≈Carlito) + injector

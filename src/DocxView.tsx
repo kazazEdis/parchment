@@ -3,7 +3,8 @@
 // tables out from the resolved span grid. This is a continuous "page sheet" (no computed pagination
 // yet — that is the Tier-2 layout-engine); it is the first thing you can actually look at, and the
 // surface the editing layer will mount onto.
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
+import { ensureFontsInjected } from "./fonts";
 import { type DocxPackage, getPartText } from "./opc";
 import { parseDocument, type Block, type Paragraph, type Inline, type Table } from "./model";
 import { parseStyles, type StyleSheet } from "./styles";
@@ -113,6 +114,7 @@ function BlockView({ block, ctx }: { block: Block; ctx: Ctx }): React.ReactEleme
 
 /** Render a .docx package as a Word-like page sheet. */
 export function DocxView({ pkg, className }: { pkg: DocxPackage; className?: string }): React.ReactElement {
+  useEffect(() => { ensureFontsInjected(); }, []);   // Calibri≈Carlito metrics for the editor preview
   const { body, page, ctx } = useMemo(() => {
     const model = parseDocument(getPartText(pkg, "word/document.xml") ?? "");
     const sheet = parseStyles(getPartText(pkg, "word/styles.xml") ?? "");

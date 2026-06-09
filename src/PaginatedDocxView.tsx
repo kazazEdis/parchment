@@ -5,7 +5,7 @@
 // the section's content height (paginate.packPages), then lays out one fixed-size page per group with
 // a page-number footer. Block-level breaks in v1 (a paragraph/table stays whole); line-level
 // splitting is a later refinement. This is the layout-engine SuperDoc has — here, light and owned.
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type DocxPackage, getPartText } from "./opc";
 import { parseDocument, parseContainer, type Block, type Paragraph, type Inline, type BorderSide } from "./model";
 import { headerXml, footerXml } from "./headerFooter";
@@ -18,6 +18,7 @@ import { resolveImageDataUrl, relationshipTarget } from "./images";
 import { ommlToMathML } from "./math";
 import { twipsToPx, emuToPx } from "./units";
 import { computePageBreaks } from "./paginate";
+import { ensureFontsInjected } from "./fonts";
 
 interface Ctx {
   sheet: StyleSheet;
@@ -197,6 +198,18 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
   const measureRef = useRef<HTMLDivElement | null>(null);
   const firstHeaderRef = useRef<HTMLDivElement | null>(null);
   const [layout, setLayout] = useState<{ breaks: number[]; total: number; firstExtra: number } | null>(null);
+  // Inject the embedded metric-compatible fonts (Calibri≈Carlito) so measurement uses Word's glyph
+  // advances. They load asynchronously, so flip `fontsReady` once ready to RE-measure (the first
+  // layout pass runs against the fallback font; this corrects the line breaks + pagination).
+  const [fontsReady, setFontsReady] = useState(false);
+  useEffect(() => {
+    ensureFontsInjected();
+    let live = true;
+    const fonts = (document as any).fonts;
+    if (fonts?.ready) fonts.ready.then(() => { if (live) setFontsReady(true); });
+    else setFontsReady(true);
+    return () => { live = false; };
+  }, []);
 
   // Measure every line's bottom-Y in the continuous flow (line-level breaks, the SuperDoc sliceLines
   // idea); break on line boundaries so paragraphs split across pages without cutting a line. Also
@@ -225,7 +238,7 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
       firstExtra = Math.min(geo.padBottom, Math.max(0, Math.round(geo.headerTop + hH + 6 - geo.padTop)));
     }
     setLayout({ breaks: computePageBreaks(sorted, geo.contentHeight), total: root.scrollHeight, firstExtra });
-  }, [blockNodes, headerNodesFirst, usesFirstHeader, geo.contentWidth, geo.contentHeight, geo.headerTop, geo.padTop]);
+  }, [blockNodes, headerNodesFirst, usesFirstHeader, geo.contentWidth, geo.contentHeight, geo.headerTop, geo.padTop, fontsReady]);
 
   return (
     <div style={{ background: "#e9e6df", padding: 24 }}>
