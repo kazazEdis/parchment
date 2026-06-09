@@ -5,7 +5,7 @@
 // rPr/pPr. This module parses the definitions and resolves the docDefaults + basedOn portion; the
 // model/render layer composes character-style and direct formatting on top (override-merge, which
 // is order-sensitive but idempotent, so applying docDefaults via the paragraph style is safe).
-import { findElement, findElements, getAttr } from "./xml";
+import { findElement, findElements, getAttr, childElements, localName } from "./xml";
 import {
   type RunProps,
   type ParagraphProps,
@@ -14,6 +14,28 @@ import {
   mergeRunProps,
   mergeParagraphProps,
 } from "./props";
+import type { Borders, BorderSide } from "./model";
+
+// Parse a table style's w:tblPr > w:tblBorders into a typed border set (the source of a styled
+// table's grid, e.g. the built-in "TableGrid"). Mirrors model.parseBorders but works off a string.
+function parseTableStyleBorders(body: string): Borders | undefined {
+  const tblPr = findElement(body, "w:tblPr");
+  if (!tblPr) return undefined;
+  const c = findElement(body, "w:tblBorders", { from: tblPr.innerStart, to: tblPr.innerEnd });
+  if (!c) return undefined;
+  const b: Borders = {};
+  for (const side of childElements(body, c.innerStart, c.innerEnd)) {
+    const ln = localName(side.name);
+    if (ln === "top" || ln === "left" || ln === "bottom" || ln === "right" || ln === "insideH" || ln === "insideV") {
+      (b as Record<string, BorderSide>)[ln] = {
+        val: getAttr(side.openTag, "w:val") ?? "single",
+        sz: Number(getAttr(side.openTag, "w:sz") ?? 0) || 0,
+        color: getAttr(side.openTag, "w:color") ?? "auto",
+      };
+    }
+  }
+  return Object.keys(b).length ? b : undefined;
+}
 
 export type StyleType = "paragraph" | "character" | "table" | "numbering";
 
@@ -29,6 +51,8 @@ export interface StyleDef {
   pPr: ParagraphProps;
   /** This style's own (unresolved) run props. */
   rPr: RunProps;
+  /** This style's own table borders (type="table" styles only), e.g. "TableGrid". */
+  tblBorders?: Borders;
 }
 
 export interface StyleSheet {
@@ -86,6 +110,7 @@ export function parseStyles(stylesXml: string): StyleSheet {
       isDefault,
       pPr,
       rPr,
+      tblBorders: type === "table" ? parseTableStyleBorders(body) : undefined,
     };
     styles.set(styleId, def);
     if (isDefault && type === "paragraph") defaultParagraphStyleId = styleId;
@@ -152,4 +177,16 @@ export function resolveParagraphStyle(sheet: StyleSheet, styleId: string | undef
 /** Resolve a character style to effective run props: docDefaults + basedOn chain. */
 export function resolveRunStyle(sheet: StyleSheet, styleId: string | undefined): RunProps {
   return mergeRunProps(sheet.docDefaults.rPr, runStyleChain(sheet, styleId));
+}
+
+/** A table style's effective borders (its w:basedOn chain, root-first, per-side override). Undefined
+ *  when the style defines none — the renderer then falls back to the table's own inline borders. */
+export function resolveTableStyleBorders(sheet: StyleSheet, styleId: string | undefined): Borders | undefined {
+  if (!styleId) return undefined;
+  let out: Borders | undefined;
+  for (const id of basedOnChain(sheet, styleId)) {
+    const def = sheet.styles.get(id);
+    if (def?.tblBorders) out = { ...out, ...def.tblBorders };
+  }
+  return out;
 }

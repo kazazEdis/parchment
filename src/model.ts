@@ -83,10 +83,19 @@ export interface Paragraph {
   source: SourceSpan;
 }
 
+// One table/cell border edge. `val` is the OOXML line style ("single", "none"/"nil", "dashed"…);
+// `sz` is in eighths of a point; `color` is a hex RRGGBB or "auto".
+export interface BorderSide { val: string; sz: number; color: string }
+// A border set as it appears on w:tblBorders (table) or w:tcBorders (cell). insideH/insideV apply
+// only to table-level borders (the rules BETWEEN cells).
+export interface Borders { top?: BorderSide; left?: BorderSide; bottom?: BorderSide; right?: BorderSide; insideH?: BorderSide; insideV?: BorderSide }
+
 export interface TableCellProps {
   gridSpan?: number;
   vMerge?: "restart" | "continue";
   width?: { value: number; type: string };
+  borders?: Borders;     // w:tcBorders — per-side overrides of the table border
+  shd?: string;          // w:shd w:fill — cell background as hex RRGGBB (no "#"); "auto"/none → undefined
 }
 
 export interface TableCell {
@@ -106,6 +115,8 @@ export interface Table {
   /** Column widths in twips, from w:tblGrid. */
   grid: number[];
   rows: TableRow[];
+  borders?: Borders;     // w:tblBorders — table-level edges + insideH/insideV rules (inline)
+  styleId?: string;      // w:tblStyle — borders may come from this style (e.g. "TableGrid")
   source: SourceSpan;
 }
 
@@ -284,6 +295,25 @@ function parseDrawing(xml: string, el: ElementSpan): Drawing {
   };
 }
 
+// Parse a w:tblBorders / w:tcBorders container (inside the given properties element) into a typed
+// Borders set. Returns undefined when the container is absent or empty.
+function parseBorders(xml: string, prEl: ElementSpan, container: "w:tblBorders" | "w:tcBorders"): Borders | undefined {
+  const c = findElement(xml, container, { from: prEl.innerStart, to: prEl.innerEnd });
+  if (!c) return undefined;
+  const b: Borders = {};
+  for (const side of childElements(xml, c.innerStart, c.innerEnd)) {
+    const ln = localName(side.name);
+    if (ln === "top" || ln === "left" || ln === "bottom" || ln === "right" || ln === "insideH" || ln === "insideV") {
+      (b as Record<string, BorderSide>)[ln] = {
+        val: getAttr(side.openTag, "w:val") ?? "single",
+        sz: parseMeasure(getAttr(side.openTag, "w:sz"), 0),
+        color: getAttr(side.openTag, "w:color") ?? "auto",
+      };
+    }
+  }
+  return Object.keys(b).length ? b : undefined;
+}
+
 function parseTable(xml: string, el: ElementSpan): Table {
   const grid: number[] = [];
   const gridEl = findElement(xml, "w:tblGrid", { from: el.innerStart, to: el.innerEnd });
@@ -292,11 +322,21 @@ function parseTable(xml: string, el: ElementSpan): Table {
       if (localName(gc.name) === "gridCol") grid.push(parseMeasure(getAttr(gc.openTag, "w:w")));
     }
   }
+  // Table-level borders live in w:tblPr. Scope the search to tblPr so a cell's w:tcBorders
+  // (which also sit under this w:tbl) can't be mistaken for the table's.
+  let borders: Borders | undefined;
+  let styleId: string | undefined;
+  const tblPr = findElement(xml, "w:tblPr", { from: el.innerStart, to: el.innerEnd });
+  if (tblPr) {
+    borders = parseBorders(xml, tblPr, "w:tblBorders");
+    const ts = findElement(xml, "w:tblStyle", { from: tblPr.innerStart, to: tblPr.innerEnd });
+    if (ts) styleId = getAttr(ts.openTag, "w:val") ?? undefined;
+  }
   const rows: TableRow[] = [];
   for (const tr of childElements(xml, el.innerStart, el.innerEnd)) {
     if (localName(tr.name) === "tr") rows.push(parseRow(xml, tr));
   }
-  return { type: "table", grid, rows, source: { start: el.outerStart, end: el.outerEnd } };
+  return { type: "table", grid, rows, borders, styleId, source: { start: el.outerStart, end: el.outerEnd } };
 }
 
 function parseRow(xml: string, el: ElementSpan): TableRow {
@@ -319,6 +359,12 @@ function parseCell(xml: string, el: ElementSpan): TableCell {
     if (vm) props.vMerge = getAttr(vm.openTag, "w:val") === "restart" ? "restart" : "continue";
     const tcW = findElement(xml, "w:tcW", { from: tcPr.innerStart, to: tcPr.innerEnd });
     if (tcW) props.width = { value: parseMeasure(getAttr(tcW.openTag, "w:w")), type: getAttr(tcW.openTag, "w:type") ?? "dxa" };
+    props.borders = parseBorders(xml, tcPr, "w:tcBorders");
+    const shd = findElement(xml, "w:shd", { from: tcPr.innerStart, to: tcPr.innerEnd });
+    if (shd) {
+      const fill = getAttr(shd.openTag, "w:fill");
+      if (fill && fill.toLowerCase() !== "auto" && !/^0*$/.test(fill)) props.shd = fill;
+    }
   }
   return { props, blocks: parseBlocks(xml, el.innerStart, el.innerEnd), source: { start: el.outerStart, end: el.outerEnd } };
 }

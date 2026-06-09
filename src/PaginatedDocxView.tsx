@@ -7,9 +7,9 @@
 // splitting is a later refinement. This is the layout-engine SuperDoc has — here, light and owned.
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { type DocxPackage, getPartText } from "./opc";
-import { parseDocument, parseContainer, type Block, type Paragraph, type Inline } from "./model";
+import { parseDocument, parseContainer, type Block, type Paragraph, type Inline, type BorderSide } from "./model";
 import { headerXml, footerXml } from "./headerFooter";
-import { parseStyles, type StyleSheet } from "./styles";
+import { parseStyles, resolveTableStyleBorders, type StyleSheet } from "./styles";
 import { parseNumbering, type Numbering } from "./numbering";
 import { effectiveParagraphProps, effectiveRunProps, markerRunProps, assignListNumbers } from "./resolve";
 import { paragraphCss, runCss, trackCss, drawingCss } from "./cssMap";
@@ -74,6 +74,16 @@ function hasAnchoredDrawing(p: Paragraph): boolean {
   return p.children.some((n) => n.type === "drawing" && n.anchored && (n.anchorXEmu != null || n.anchorYEmu != null));
 }
 
+// One OOXML border edge → a CSS border value, or undefined for "no edge". val "none"/"nil" (or an
+// absent side) means Word draws nothing — the previous code drew a 1px rule on EVERY cell regardless,
+// turning borderless tables into a heavy grid. sz is in eighths of a point.
+function borderCss(s?: BorderSide): string | undefined {
+  if (!s || s.val === "none" || s.val === "nil") return undefined;
+  const px = Math.max(1, Math.round((s.sz / 8) * (96 / 72)));
+  const color = !s.color || s.color === "auto" ? "#000" : `#${s.color}`;
+  return `${px}px solid ${color}`;
+}
+
 function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
   if (b.type === "paragraph") {
     const eff = effectiveParagraphProps(ctx.sheet, ctx.numbering, b.pPr);
@@ -87,16 +97,38 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
   }
   const total = b.grid.reduce((a, c) => a + c, 0);
   const grid = resolveTableGrid(b);
+  // Effective table borders = the table style's borders (e.g. "TableGrid") with the table's own
+  // inline w:tblBorders overriding per side. Cell w:tcBorders override again at the cell level below.
+  const styleBorders = resolveTableStyleBorders(ctx.sheet, b.styleId);
+  const tb: typeof b.borders = styleBorders || b.borders ? { ...styleBorders, ...b.borders } : undefined;
+  const lastRow = grid.length - 1;
+  const totalCols = b.grid.length;
   return (
     <table key={key} style={{ borderCollapse: "collapse", tableLayout: "fixed", width: total ? twipsToPx(total) : "100%", margin: "0 0 8px" }}>
       <tbody>
-        {grid.map((cells, ri) => (
-          <tr key={ri}>{cells.map((rc, ci) => (
-            <td key={ci} colSpan={rc.colSpan > 1 ? rc.colSpan : undefined} rowSpan={rc.rowSpan > 1 ? rc.rowSpan : undefined} style={{ border: "1px solid #b3b3b3", padding: "2px 5px", verticalAlign: "top" }}>
-              {rc.cell.blocks.map((cb, bi) => renderBlock(cb, ctx, bi))}
-            </td>
-          ))}</tr>
-        ))}
+        {grid.map((cells, ri) => {
+          let col = 0;   // running grid column so first/last-column edges resolve to the table's outer border
+          return (
+            <tr key={ri}>{cells.map((rc, ci) => {
+              const cbd = rc.cell.props.borders;   // cell w:tcBorders override the table border per side
+              const firstCol = col === 0;
+              const lastCol = col + rc.colSpan >= totalCols;
+              // A side = the cell's own border if set, else the table's outer edge (first/last) or its
+              // interior rule (insideH between rows / insideV between columns).
+              const top = borderCss(cbd?.top ?? (ri === 0 ? tb?.top : tb?.insideH));
+              const bottom = borderCss(cbd?.bottom ?? (ri === lastRow ? tb?.bottom : tb?.insideH));
+              const left = borderCss(cbd?.left ?? (firstCol ? tb?.left : tb?.insideV));
+              const right = borderCss(cbd?.right ?? (lastCol ? tb?.right : tb?.insideV));
+              col += rc.colSpan;
+              return (
+                <td key={ci} colSpan={rc.colSpan > 1 ? rc.colSpan : undefined} rowSpan={rc.rowSpan > 1 ? rc.rowSpan : undefined}
+                  style={{ borderTop: top, borderRight: right, borderBottom: bottom, borderLeft: left, background: rc.cell.props.shd ? `#${rc.cell.props.shd}` : undefined, padding: "2px 5px", verticalAlign: "top" }}>
+                  {rc.cell.blocks.map((cb, bi) => renderBlock(cb, ctx, bi))}
+                </td>
+              );
+            })}</tr>
+          );
+        })}
       </tbody>
     </table>
   );
