@@ -42,13 +42,22 @@ describe("cssMap: paragraph props → CSS", () => {
       textIndent: 24,
       marginTop: 16,
       marginBottom: 8,
-      lineHeight: 1.7249999999999999, // (360/240) × 1.15 Word natural-single-line factor
+      lineHeight: 1.62, // (360/240) × 1.08 sans natural-single-line factor (no font → sans default)
     });
   });
 
   it("hanging indent is a negative text-indent; exact line rule is px", () => {
     expect(paragraphCss({ indent: { hanging: 360 } }).textIndent).toBe(-24);
     expect(paragraphCss({ spacing: { line: 480, lineRule: "exact" } }).lineHeight).toBe("32px");
+  });
+
+  it("single auto line height uses a font-dependent natural-line factor", () => {
+    const single = { spacing: { line: 240, lineRule: "auto" as const } };
+    // Sans (Calibri/Carlito) ≈ 1.08; tall serif (Cambria/Caladea) ≈ 1.17. Matches Word per-font.
+    expect(paragraphCss(single, "Calibri").lineHeight).toBeCloseTo(1.08, 5);
+    expect(paragraphCss(single, "Carlito").lineHeight).toBeCloseTo(1.08, 5);
+    expect(paragraphCss(single, "Cambria").lineHeight).toBeCloseTo(1.17, 5);
+    expect(paragraphCss(single).lineHeight).toBeCloseTo(1.08, 5); // no font → sans default
   });
 });
 

@@ -63,8 +63,10 @@ function InlineView({ node, paraPPr, ctx }: { node: Inline; paraPPr: ParagraphPr
 function ParagraphView({ p, ctx }: { p: Paragraph; ctx: Ctx }): React.ReactElement {
   const eff = effectiveParagraphProps(ctx.sheet, ctx.numbering, p.pPr, ctx.tableStyleId);
   const marker = ctx.markers.get(p);
+  const firstRun = p.children.find((n) => n.type === "run");
+  const font = effectiveRunProps(ctx.sheet, ctx.numbering, p.pPr, firstRun?.rPr ?? {}, ctx.tableStyleId).fonts?.ascii;
   return (
-    <p style={{ margin: 0, ...paragraphCss(eff) }}>
+    <p style={{ margin: 0, ...paragraphCss(eff, font) }}>
       {marker !== undefined && (
         <span style={{ ...runCss(markerRunProps(ctx.sheet, ctx.numbering, p.pPr)), whiteSpace: "nowrap", marginRight: "0.4em" }}>
           {marker}

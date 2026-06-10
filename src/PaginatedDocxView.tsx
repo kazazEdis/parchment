@@ -116,8 +116,12 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
   if (b.type === "paragraph") {
     const eff = effectiveParagraphProps(ctx.sheet, ctx.numbering, b.pPr, ctx.tableStyleId);
     const marker = ctx.markers.get(b);
+    // Dominant font for the single-line factor: the first run's effective ascii (else the paragraph
+    // mark's), so a Cambria header line gets serif metrics and a Calibri body line stays tight.
+    const firstRun = b.children.find((n) => n.type === "run");
+    const font = effectiveRunProps(ctx.sheet, ctx.numbering, b.pPr, firstRun?.rPr ?? {}, ctx.tableStyleId).fonts?.ascii;
     return (
-      <p key={key} style={{ margin: 0, ...paragraphCss(eff), ...(hasAnchoredDrawing(b) ? { position: "relative" } : null) }}>
+      <p key={key} style={{ margin: 0, ...paragraphCss(eff, font), ...(hasAnchoredDrawing(b) ? { position: "relative" } : null) }}>
         {marker !== undefined && <span style={{ ...runCss(markerRunProps(ctx.sheet, ctx.numbering, b.pPr)), marginRight: "0.4em" }}>{marker}</span>}
         {isFloatingOnly(b) ? (
           // Render only the floating drawings (absolute, no line box) + exactly ONE <br> so the

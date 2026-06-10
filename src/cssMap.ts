@@ -75,12 +75,20 @@ const ALIGN: Record<string, CSSProperties["textAlign"]> = {
 };
 
 // Word's "single" line spacing (w:line=240, lineRule=auto) = the font's natural line height, not the
-// em. For Calibri/Carlito (this engine's metric-default font) that is ~1.15× the font size, measured
-// against LibreOffice/Word at 1.17. Matches the page container's default lineHeight (1.15).
-const WORD_SINGLE_LINE = 1.15;
+// em (CSS line-height:1.0). That natural height is FONT-DEPENDENT and measurably different per family
+// (vs LibreOffice/Word): Calibri/Carlito body ≈ 1.073, Cambria/Caladea headings ≈ 1.174. A single
+// flat factor inflates one to fix the other — sans bodies bloat, or serif headers stay too tight and
+// a header rule rides up over the logo. Pick the factor from the paragraph's dominant font.
+const lineFactorFor = (font?: string): number => {
+  const f = (font ?? "").toLowerCase();
+  // Tall-metrics serif families (Word major-theme default Cambria, its Caladea twin, Georgia, Times).
+  if (/cambria|caladea|georgia|times|garamond|serif/.test(f)) return 1.17;
+  return 1.08; // Calibri/Carlito/Arial-class sans (measured Word Calibri body 1.073)
+};
 
-/** Resolved paragraph props → inline CSS for a block. */
-export function paragraphCss(p: ParagraphProps): CSSProperties {
+/** Resolved paragraph props → inline CSS for a block. `font` = the paragraph's dominant ascii font,
+ *  used to pick the correct single-line factor for lineRule="auto" (see lineFactorFor). */
+export function paragraphCss(p: ParagraphProps, font?: string): CSSProperties {
   const css: CSSProperties = {};
   if (p.alignment) css.textAlign = ALIGN[p.alignment];
 
@@ -101,7 +109,7 @@ export function paragraphCss(p: ParagraphProps): CSSProperties {
         // `line-height: 1.0` is too tight: text measured 9.76pt/line where Word gives 11.74pt, which
         // accumulates (a 6-line block 12pt short → header rules ride up, tables ~13px under Word).
         // Scale the multiple by the natural-line factor so "single" renders like Word.
-        ? lineAutoToMultiple(p.spacing.line) * WORD_SINGLE_LINE
+        ? lineAutoToMultiple(p.spacing.line) * lineFactorFor(font)
         : `${twipsToPx(p.spacing.line)}px`;
     }
   }
