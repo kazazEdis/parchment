@@ -120,6 +120,14 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
   const totalCols = b.grid.length;
   return (
     <table key={key} style={{ borderCollapse: "collapse", tableLayout: "fixed", width: total ? twipsToPx(total) : "100%", margin: "0 0 8px" }}>
+      {/* w:tblGrid → <colgroup>: without explicit column widths, table-layout:fixed distributes
+          the width EQUALLY across columns, ignoring the docx grid (narrow label + wide content
+          columns collapse to uniform stripes and every cell mis-wraps). */}
+      {total > 0 && (
+        <colgroup>
+          {b.grid.map((w, i) => <col key={i} style={{ width: `${((w / total) * 100).toFixed(3)}%` }} />)}
+        </colgroup>
+      )}
       <tbody>
         {grid.map((cells, ri) => {
           let col = 0;   // running grid column so first/last-column edges resolve to the table's outer border
@@ -137,7 +145,7 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
               col += rc.colSpan;
               return (
                 <td key={ci} colSpan={rc.colSpan > 1 ? rc.colSpan : undefined} rowSpan={rc.rowSpan > 1 ? rc.rowSpan : undefined}
-                  style={{ borderTop: top, borderRight: right, borderBottom: bottom, borderLeft: left, background: rc.cell.props.shd ? `#${rc.cell.props.shd}` : undefined, padding: "2px 5px", verticalAlign: "top" }}>
+                  style={{ borderTop: top, borderRight: right, borderBottom: bottom, borderLeft: left, background: rc.cell.props.shd ? `#${rc.cell.props.shd}` : undefined, padding: "2px 5px", verticalAlign: rc.cell.props.vAlign === "center" ? "middle" : (rc.cell.props.vAlign ?? "top") }}>
                   {rc.cell.blocks.map((cb, bi) => renderBlock(cb, ctx, bi))}
                 </td>
               );
@@ -158,7 +166,7 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
 }): React.ReactElement {
   const { blocks, headerDefault, headerFirst, footer, hasTitlePage, ctx, headerCtxDefault, headerCtxFirst, footerCtx, geo } = useMemo(() => {
     const model = parseDocument(getPartText(pkg, "word/document.xml") ?? "");
-    const sheet = parseStyles(getPartText(pkg, "word/styles.xml") ?? "");
+    const sheet = parseStyles(getPartText(pkg, "word/styles.xml") ?? "", getPartText(pkg, "word/theme/theme1.xml"));
     const numbering = parseNumbering(getPartText(pkg, "word/numbering.xml") ?? "");
     const markers = assignListNumbers(model, numbering);
     const sec = model.section;
@@ -197,7 +205,8 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
   const usesFirstHeader = hasTitlePage && headerNodesFirst.length > 0;
   const measureRef = useRef<HTMLDivElement | null>(null);
   const firstHeaderRef = useRef<HTMLDivElement | null>(null);
-  const [layout, setLayout] = useState<{ breaks: number[]; total: number; firstExtra: number } | null>(null);
+  const defaultHeaderRef = useRef<HTMLDivElement | null>(null);
+  const [layout, setLayout] = useState<{ breaks: number[]; total: number; firstExtra: number; defaultExtra: number } | null>(null);
   // Inject the embedded metric-compatible fonts (Calibri≈Carlito) so measurement uses Word's glyph
   // advances. They load asynchronously, so flip `fontsReady` once ready to RE-measure (the first
   // layout pass runs against the fallback font; this corrects the line breaks + pagination).
@@ -250,8 +259,17 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
       const hH = firstHeaderRef.current.getBoundingClientRect().height / scale;
       firstExtra = Math.min(geo.padBottom, Math.max(0, Math.round(geo.headerTop + hH + 6 - geo.padTop)));
     }
-    setLayout({ breaks: computePageBreaks(sorted, geo.contentHeight), total: root.scrollHeight, firstExtra });
-  }, [blockNodes, headerNodesFirst, usesFirstHeader, geo.contentWidth, geo.contentHeight, geo.headerTop, geo.padTop, fontsReady]);
+    // The DEFAULT header repeats on every page — when it pokes below the top margin (a tall
+    // letterhead with no titlePage), EVERY page's body must start below it AND each page holds
+    // less content, or the header overlaps the first body rows on every page (Word grows the
+    // top text-boundary to fit the header). Clamped like firstExtra.
+    let defaultExtra = 0;
+    if (defaultHeaderRef.current) {
+      const hH = defaultHeaderRef.current.getBoundingClientRect().height / scale;
+      defaultExtra = Math.min(geo.padBottom, Math.max(0, Math.round(geo.headerTop + hH + 6 - geo.padTop)));
+    }
+    setLayout({ breaks: computePageBreaks(sorted, geo.contentHeight - defaultExtra), total: root.scrollHeight, firstExtra, defaultExtra });
+  }, [blockNodes, headerNodesDefault, headerNodesFirst, usesFirstHeader, geo.contentWidth, geo.contentHeight, geo.headerTop, geo.padTop, geo.padBottom, fontsReady]);
 
   return (
     <div style={{ background: "#e9e6df", padding: 24 }}>
@@ -265,11 +283,19 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
           {headerNodesFirst}
         </div>
       )}
+      {/* offscreen measurer for the default header (reserves its height on every page it appears) */}
+      {headerNodesDefault.length > 0 && (
+        <div ref={defaultHeaderRef} style={{ position: "absolute", visibility: "hidden", left: -99999, top: 0, width: geo.contentWidth, fontSize: "10pt" }}>
+          {headerNodesDefault}
+        </div>
+      )}
       {layout?.breaks.map((startY, pi) => {
         const endY = pi < layout.breaks.length - 1 ? layout.breaks[pi + 1] : layout.total;
         const onFirst = pi === 0 && usesFirstHeader;              // page 1 shows the first-page header
         const pageHeader = onFirst ? headerNodesFirst : headerNodesDefault;
-        const bodyExtra = pi === 0 ? layout.firstExtra : 0;       // nudge the page-1 body below the logo band
+        // Nudge each page's body below its header: the first-page header on page 1, the default
+        // header everywhere it appears.
+        const bodyExtra = onFirst ? layout.firstExtra : layout.defaultExtra;
         return (
           <div
             key={pi}
@@ -283,7 +309,7 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
             ) : null}
             {/* window clipped to this page's line slice; the same flow translated up by startY. On page 1 a
                 tall first-page header pushes the body down by bodyExtra (and shortens its content height). */}
-            <div style={{ marginTop: bodyExtra, height: Math.min(endY - startY, geo.contentHeight), overflow: "hidden" }}>
+            <div style={{ marginTop: bodyExtra, height: Math.min(endY - startY, geo.contentHeight - bodyExtra), overflow: "hidden" }}>
               <div style={{ transform: `translateY(${-startY}px)`, width: geo.contentWidth }}>{blockNodes}</div>
             </div>
             {footer.length > 0 ? (

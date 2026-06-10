@@ -24,6 +24,8 @@ export function emitRunProps(p: RunProps): string {
     if (p.fonts.hAnsi) a.push(`w:hAnsi="${escapeXmlAttr(p.fonts.hAnsi)}"`);
     if (p.fonts.eastAsia) a.push(`w:eastAsia="${escapeXmlAttr(p.fonts.eastAsia)}"`);
     if (p.fonts.cs) a.push(`w:cs="${escapeXmlAttr(p.fonts.cs)}"`);
+    if (p.fonts.asciiTheme) a.push(`w:asciiTheme="${escapeXmlAttr(p.fonts.asciiTheme)}"`);
+    if (p.fonts.hAnsiTheme) a.push(`w:hAnsiTheme="${escapeXmlAttr(p.fonts.hAnsiTheme)}"`);
     if (a.length) parts.push(`<w:rFonts ${a.join(" ")}/>`);
   }
   if (p.bold !== undefined) parts.push(toggleEl("w:b", p.bold));

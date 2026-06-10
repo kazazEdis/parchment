@@ -31,7 +31,7 @@ export function fromPackage(pkg: DocxPackage): Doc {
     documentXml,
     commentsXml: getPartText(pkg, "word/comments.xml") ?? "",
     model: parseDocument(documentXml),
-    styles: parseStyles(getPartText(pkg, "word/styles.xml") ?? ""),
+    styles: parseStyles(getPartText(pkg, "word/styles.xml") ?? "", getPartText(pkg, "word/theme/theme1.xml")),
     numbering: parseNumbering(getPartText(pkg, "word/numbering.xml") ?? ""),
   };
 }

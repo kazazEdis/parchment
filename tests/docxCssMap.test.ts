@@ -12,7 +12,7 @@ describe("cssMap: run props → CSS", () => {
       textDecoration: "underline line-through",
       color: "#FF0000",
       fontSize: "12pt",
-      fontFamily: "Arial",
+      fontFamily: "Arial, Helvetica, sans-serif",
       backgroundColor: "#ffff00",
       textTransform: "uppercase",
     });

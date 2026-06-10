@@ -99,6 +99,7 @@ export interface TableCellProps {
   width?: { value: number; type: string };
   borders?: Borders;     // w:tcBorders — per-side overrides of the table border
   shd?: string;          // w:shd w:fill — cell background as hex RRGGBB (no "#"); "auto"/none → undefined
+  vAlign?: "top" | "center" | "bottom";  // w:vAlign — vertical content alignment
 }
 
 export interface TableCell {
@@ -378,6 +379,11 @@ function parseCell(xml: string, el: ElementSpan): TableCell {
     if (shd) {
       const fill = getAttr(shd.openTag, "w:fill");
       if (fill && fill.toLowerCase() !== "auto" && !/^0*$/.test(fill)) props.shd = fill;
+    }
+    const va = findElement(xml, "w:vAlign", { from: tcPr.innerStart, to: tcPr.innerEnd });
+    if (va) {
+      const v = getAttr(va.openTag, "w:val");
+      if (v === "center" || v === "bottom" || v === "top") props.vAlign = v;
     }
   }
   return { props, blocks: parseBlocks(xml, el.innerStart, el.innerEnd), source: { start: el.outerStart, end: el.outerEnd } };

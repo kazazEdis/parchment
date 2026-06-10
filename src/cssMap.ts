@@ -19,6 +19,29 @@ function hexColor(v: string | undefined): string | undefined {
   return /^[0-9a-fA-F]{6}$/.test(v) ? `#${v}` : v;
 }
 
+/** Metric-compatible substitutes appended after the named font, plus a generic family so a
+ *  missing font degrades to the right shape (sans vs serif) instead of the browser serif default.
+ *  Carlito (≈Calibri) ships embedded via FONT_FACE_CSS; the others rely on the OS. */
+const FONT_FALLBACK: Record<string, string> = {
+  calibri: "Carlito, sans-serif",
+  cambria: "Caladea, Georgia, serif",
+  arial: "Helvetica, sans-serif",
+  "times new roman": "Liberation Serif, Georgia, serif",
+  verdana: "DejaVu Sans, sans-serif",
+  tahoma: "DejaVu Sans, sans-serif",
+  georgia: "serif",
+  garamond: "serif",
+  "courier new": "Liberation Mono, monospace",
+  consolas: "monospace",
+};
+
+/** A font name → a CSS font-family stack with metric-compatible + generic fallbacks. */
+export function fontFamilyCss(name: string): string {
+  const quoted = /[ ,]/.test(name) ? `"${name}"` : name;
+  const fb = FONT_FALLBACK[name.toLowerCase()];
+  return fb ? `${quoted}, ${fb}` : `${quoted}, sans-serif`;
+}
+
 /** Resolved run props → inline CSS for a text span. */
 export function runCss(p: RunProps): CSSProperties {
   const css: CSSProperties = {};
@@ -34,7 +57,7 @@ export function runCss(p: RunProps): CSSProperties {
   const color = hexColor(p.color);
   if (color) css.color = color;
   if (p.fontSize !== undefined) css.fontSize = `${p.fontSize}pt`;
-  if (p.fonts?.ascii) css.fontFamily = p.fonts.ascii;
+  if (p.fonts?.ascii) css.fontFamily = fontFamilyCss(p.fonts.ascii);
 
   if (p.highlight !== undefined) css.backgroundColor = HIGHLIGHT[p.highlight] ?? p.highlight;
   else { const shd = hexColor(p.shading); if (shd) css.backgroundColor = shd; }

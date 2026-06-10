@@ -60,6 +60,30 @@ export interface StyleSheet {
   docDefaults: { pPr: ParagraphProps; rPr: RunProps };
   defaultParagraphStyleId?: string;
   defaultCharacterStyleId?: string;
+  /** Latin typefaces from the theme part (a:majorFont / a:minorFont). Resolves theme font tokens
+   *  (w:asciiTheme="minorHAnsi" → minor, "majorHAnsi" → major) in the run cascade. */
+  themeFonts?: { major?: string; minor?: string };
+}
+
+/** Parse theme1.xml's major/minor latin typefaces (what w:asciiTheme tokens point at). */
+export function parseThemeFonts(themeXml: string | undefined): { major?: string; minor?: string } | undefined {
+  if (!themeXml) return undefined;
+  const grab = (tag: string): string | undefined => {
+    const scheme = findElement(themeXml, tag);
+    if (!scheme) return undefined;
+    const latin = findElement(themeXml, "a:latin", { from: scheme.innerStart, to: scheme.innerEnd });
+    const tf = latin ? getAttr(latin.openTag, "typeface") : undefined;
+    return tf || undefined;
+  };
+  const major = grab("a:majorFont");
+  const minor = grab("a:minorFont");
+  return major || minor ? { major, minor } : undefined;
+}
+
+/** Map a theme font token to the concrete typeface from the theme part. */
+export function resolveThemeFont(themeFonts: { major?: string; minor?: string } | undefined, token: string | undefined): string | undefined {
+  if (!themeFonts || !token) return undefined;
+  return token.startsWith("major") ? themeFonts.major : token.startsWith("minor") ? themeFonts.minor : undefined;
 }
 
 const innerOf = (xml: string, name: string, from = 0): string | undefined => {
@@ -67,8 +91,9 @@ const innerOf = (xml: string, name: string, from = 0): string | undefined => {
   return el ? xml.slice(el.innerStart, el.innerEnd) : undefined;
 };
 
-/** Parse styles.xml into a style table + docDefaults. */
-export function parseStyles(stylesXml: string): StyleSheet {
+/** Parse styles.xml into a style table + docDefaults. Pass the theme part's XML so theme font
+ *  tokens (w:asciiTheme) resolve to concrete typefaces in the cascade; omitted → tokens ignored. */
+export function parseStyles(stylesXml: string, themeXml?: string): StyleSheet {
   const styles = new Map<string, StyleDef>();
 
   // docDefaults: w:docDefaults > {w:rPrDefault > w:rPr, w:pPrDefault > w:pPr}
@@ -117,7 +142,7 @@ export function parseStyles(stylesXml: string): StyleSheet {
     if (isDefault && type === "character") defaultCharacterStyleId = styleId;
   }
 
-  return { styles, docDefaults: { pPr: defP, rPr: defR }, defaultParagraphStyleId, defaultCharacterStyleId };
+  return { styles, docDefaults: { pPr: defP, rPr: defR }, defaultParagraphStyleId, defaultCharacterStyleId, themeFonts: parseThemeFonts(themeXml) };
 }
 
 /** Follow w:basedOn from `styleId` up to the root, returning ids root-first. Cycle-guarded. */

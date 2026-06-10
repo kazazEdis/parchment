@@ -117,7 +117,7 @@ export function DocxView({ pkg, className }: { pkg: DocxPackage; className?: str
   useEffect(() => { ensureFontsInjected(); }, []);   // Calibri≈Carlito metrics for the editor preview
   const { body, page, ctx } = useMemo(() => {
     const model = parseDocument(getPartText(pkg, "word/document.xml") ?? "");
-    const sheet = parseStyles(getPartText(pkg, "word/styles.xml") ?? "");
+    const sheet = parseStyles(getPartText(pkg, "word/styles.xml") ?? "", getPartText(pkg, "word/theme/theme1.xml"));
     const numbering = parseNumbering(getPartText(pkg, "word/numbering.xml") ?? "");
     const markers = assignListNumbers(model, numbering);
     const sec = model.section;

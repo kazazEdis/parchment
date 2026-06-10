@@ -7,7 +7,7 @@
 //
 // docDefaults is applied exactly once (we use the chain-only style builders), so a character style
 // never resets a paragraph style's size via its own inherited default.
-import { type StyleSheet, paragraphStyleChain, runStyleChain } from "./styles";
+import { type StyleSheet, paragraphStyleChain, runStyleChain, resolveThemeFont } from "./styles";
 import { type Numbering, getLevel, formatMarker } from "./numbering";
 import { type RunProps, type ParagraphProps, mergeRunProps, mergeParagraphProps } from "./props";
 import { type DocumentModel, type Block, type Paragraph } from "./model";
@@ -42,7 +42,20 @@ export function effectiveRunProps(
     if (lvl) out = mergeRunProps(out, lvl.rPr);
   }
   if (runRPr.styleId) out = mergeRunProps(out, runStyleChain(sheet, runRPr.styleId));
-  return mergeRunProps(out, runRPr);
+  return substituteThemeFonts(sheet, mergeRunProps(out, runRPr));
+}
+
+/** After the cascade: a theme font token (w:asciiTheme="minorHAnsi") with no concrete w:ascii at
+ *  the same-or-later level resolves to the theme part's typeface. Without this, theme-driven runs
+ *  (Word's default — docDefaults uses minorHAnsi) had no font-family at all and fell back to the
+ *  browser's serif default, breaking metrics-sensitive layout. */
+function substituteThemeFonts(sheet: StyleSheet, p: RunProps): RunProps {
+  const f = p.fonts;
+  if (!f || !sheet.themeFonts) return p;
+  const ascii = f.ascii ?? resolveThemeFont(sheet.themeFonts, f.asciiTheme);
+  const hAnsi = f.hAnsi ?? resolveThemeFont(sheet.themeFonts, f.hAnsiTheme);
+  if (ascii === f.ascii && hAnsi === f.hAnsi) return p;
+  return { ...p, fonts: { ...f, ascii, hAnsi } };
 }
 
 /** The marker run props for a list paragraph's bullet/number (numbering-level rPr over the cascade). */
@@ -56,7 +69,7 @@ export function markerRunProps(
     const lvl = getLevel(numbering, pPr.numbering.numId, pPr.numbering.level);
     if (lvl) out = mergeRunProps(out, lvl.rPr);
   }
-  return out;
+  return substituteThemeFonts(sheet, out);
 }
 
 /**

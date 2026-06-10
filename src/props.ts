@@ -11,6 +11,11 @@ export interface Fonts {
   hAnsi?: string;
   eastAsia?: string;
   cs?: string;
+  /** Theme font token ("minorHAnsi", "majorHAnsi", "minorAscii", …) from w:asciiTheme. Resolved
+   *  against the theme part's major/minor latin typefaces at render time (resolve.ts); preserved
+   *  verbatim on round-trip so we never bake a concrete font into a theme-driven document. */
+  asciiTheme?: string;
+  hAnsiTheme?: string;
 }
 
 export interface RunProps {
@@ -113,6 +118,8 @@ export function parseRunProps(inner: string): RunProps {
     const hAnsi = getAttr(rFonts.openTag, "w:hAnsi"); if (hAnsi) fonts.hAnsi = hAnsi;
     const eastAsia = getAttr(rFonts.openTag, "w:eastAsia"); if (eastAsia) fonts.eastAsia = eastAsia;
     const cs = getAttr(rFonts.openTag, "w:cs"); if (cs) fonts.cs = cs;
+    const asciiTheme = getAttr(rFonts.openTag, "w:asciiTheme"); if (asciiTheme) fonts.asciiTheme = asciiTheme;
+    const hAnsiTheme = getAttr(rFonts.openTag, "w:hAnsiTheme"); if (hAnsiTheme) fonts.hAnsiTheme = hAnsiTheme;
     if (Object.keys(fonts).length) p.fonts = fonts;
   }
 
