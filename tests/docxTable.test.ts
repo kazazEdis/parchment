@@ -31,6 +31,26 @@ describe("table: span resolution", () => {
     expect(g[1]).toHaveLength(3);
   });
 
+  it("infers colSpan from cell width when w:gridSpan is absent", () => {
+    // 6-col grid; a data row whose 2nd cell is as wide as cols 2+3 (no gridSpan) must occupy 2 cols
+    // so the trailing cells line up under the header (which DOES set gridSpan=2). Mirrors the offer
+    // items table where the description column is widened by width, not span.
+    const table: Table = {
+      type: "table", grid: [1008, 3387, 1984, 1134, 1276, 1276], source: S,
+      rows: [
+        row([cell(), cell({ gridSpan: 2 }), cell(), cell(), cell()]),               // header
+        row([cell({ width: { value: 1008, type: "dxa" } }),
+             cell({ width: { value: 5371, type: "dxa" } }),                          // 3387+1984
+             cell({ width: { value: 1134, type: "dxa" } }),
+             cell({ width: { value: 1276, type: "dxa" } }),
+             cell({ width: { value: 1276, type: "dxa" } })]),
+      ],
+    };
+    const g = resolveTableGrid(table);
+    expect(g[0].map((c) => c.colSpan)).toEqual([1, 2, 1, 1, 1]); // header
+    expect(g[1].map((c) => c.colSpan)).toEqual([1, 2, 1, 1, 1]); // data row now aligned
+  });
+
   it("a restart immediately followed by a non-merge clears the span", () => {
     const table: Table = {
       type: "table", grid: [100], source: S,

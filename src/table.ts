@@ -13,6 +13,24 @@ export interface RenderCell {
   rowSpan: number;
 }
 
+// How many grid columns a cell covers when it has no explicit w:gridSpan: Word derives the span from
+// the cell's width (w:tcW) — a cell as wide as N grid columns occupies N of them. Without this a wide
+// cell (e.g. a description column the template widened instead of setting gridSpan) collapses to one
+// column and every following cell in the row shifts left, misaligning the data under its headers.
+function inferColSpan(grid: number[], col: number, cellWidthTwips: number | undefined): number {
+  if (!cellWidthTwips || col >= grid.length) return 1;
+  // Accumulate grid columns from `col` until their total reaches the cell's width (10-twip tolerance
+  // for rounding). Stop at the first column that meets/exceeds it; never overruns the grid.
+  let acc = 0;
+  let n = 0;
+  for (let c = col; c < grid.length; c++) {
+    acc += grid[c];
+    n += 1;
+    if (acc >= cellWidthTwips - 10) break;
+  }
+  return Math.max(1, n);
+}
+
 export function resolveTableGrid(table: Table): RenderCell[][] {
   const result: RenderCell[][] = table.rows.map(() => []);
   const openSpan: (RenderCell | null)[] = []; // per grid column → the restart cell currently spanning down
@@ -20,7 +38,8 @@ export function resolveTableGrid(table: Table): RenderCell[][] {
   table.rows.forEach((row, r) => {
     let col = 0;
     for (const cell of row.cells) {
-      const colSpan = cell.props.gridSpan ?? 1;
+      const colSpan = cell.props.gridSpan
+        ?? (cell.props.width?.type === "dxa" ? inferColSpan(table.grid, col, cell.props.width.value) : 1);
       if (cell.props.vMerge === "continue" && openSpan[col]) {
         openSpan[col]!.rowSpan += 1; // covered by the restart above — extend it, emit nothing
       } else {
