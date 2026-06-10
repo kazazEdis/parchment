@@ -290,33 +290,19 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
     // top-margin slack, so the page-1 body is only NUDGED down by this (into the same slack) — page 1
     // keeps its full content height, matching Word (which doesn't drop a row to show the letterhead).
     // Clamp so a very tall header can't push the body into the footer.
-    // The header's effective height for the body push-down must include anchored (floating) drawings.
-    // getBoundingClientRect().height counts only IN-FLOW content, so a header that is mostly a
-    // position:absolute logo measures near 0 → the body isn't pushed down far enough and the logo
-    // spills over the first body rows / top rule. Word grows the header boundary to fit floats; mirror
-    // that by taking the max of the flow height and every absolutely-positioned descendant's bottom.
-    const headerContentHeight = (el: HTMLElement): number => {
-      const elTop = el.getBoundingClientRect().top;
-      let h = el.getBoundingClientRect().height;
-      el.querySelectorAll("*").forEach((c) => {
-        if (getComputedStyle(c as Element).position === "absolute") {
-          h = Math.max(h, (c as Element).getBoundingClientRect().bottom - elTop);
-        }
-      });
-      return h / scale;
-    };
+    // Header height for the body push-down uses the FLOW height only. Word lets floating header
+    // images (a logo) sit in the top-margin slack and does NOT push the body down to clear them — so
+    // we must not count anchored drawings here, or the body is shoved too far down (the terms table
+    // spills to the next page). The logo-vs-rule alignment is handled by correct line metrics, not by
+    // pushing the body.
     let firstExtra = 0;
     if (usesFirstHeader && firstHeaderRef.current) {
-      const hH = headerContentHeight(firstHeaderRef.current);
+      const hH = firstHeaderRef.current.getBoundingClientRect().height / scale;
       firstExtra = Math.min(geo.padBottom, Math.max(0, Math.round(geo.headerTop + hH + 6 - geo.padTop)));
     }
-    // The DEFAULT header repeats on every page — when it pokes below the top margin (a tall
-    // letterhead with no titlePage), EVERY page's body must start below it AND each page holds
-    // less content, or the header overlaps the first body rows on every page (Word grows the
-    // top text-boundary to fit the header). Clamped like firstExtra.
     let defaultExtra = 0;
     if (defaultHeaderRef.current) {
-      const hH = headerContentHeight(defaultHeaderRef.current);
+      const hH = defaultHeaderRef.current.getBoundingClientRect().height / scale;
       defaultExtra = Math.min(geo.padBottom, Math.max(0, Math.round(geo.headerTop + hH + 6 - geo.padTop)));
     }
     // Later pages reserve the default header's overflow; page 1 reserves the first-page header's
