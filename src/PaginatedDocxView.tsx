@@ -119,8 +119,19 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
     return (
       <p key={key} style={{ margin: 0, ...paragraphCss(eff), ...(hasAnchoredDrawing(b) ? { position: "relative" } : null) }}>
         {marker !== undefined && <span style={{ ...runCss(markerRunProps(ctx.sheet, ctx.numbering, b.pPr)), marginRight: "0.4em" }}>{marker}</span>}
-        {b.children.length ? b.children.map((n, i) => <Inline key={i} node={n} paraPPr={b.pPr} ctx={ctx} />) : <br />}
-        {isFloatingOnly(b) && <br />}
+        {isFloatingOnly(b) ? (
+          // Render only the floating drawings (absolute, no line box) + exactly ONE <br> so the
+          // paragraph is a single line like Word's paragraph mark. Skip the whitespace runs — they'd
+          // either collapse to 0 or, combined with the <br>, render a spurious second line.
+          <>
+            {b.children.filter((n) => n.type === "drawing").map((n, i) => <Inline key={i} node={n} paraPPr={b.pPr} ctx={ctx} />)}
+            <br />
+          </>
+        ) : b.children.length ? (
+          b.children.map((n, i) => <Inline key={i} node={n} paraPPr={b.pPr} ctx={ctx} />)
+        ) : (
+          <br />
+        )}
       </p>
     );
   }

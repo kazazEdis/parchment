@@ -70,8 +70,17 @@ function ParagraphView({ p, ctx }: { p: Paragraph; ctx: Ctx }): React.ReactEleme
           {marker}
         </span>
       )}
-      {p.children.length ? p.children.map((n, i) => <InlineView key={i} node={n} paraPPr={p.pPr} ctx={ctx} />) : <br />}
-      {p.children.length > 0 && p.children.every((n) => (n.type === "drawing" && n.anchored) || (n.type === "run" && !(n.text ?? "").trim())) && <br />}
+      {p.children.length > 0 && p.children.every((n) => (n.type === "drawing" && n.anchored) || (n.type === "run" && !(n.text ?? "").trim())) ? (
+        // Floating/whitespace-only paragraph → floats + exactly one line (Word's paragraph mark).
+        <>
+          {p.children.filter((n) => n.type === "drawing").map((n, i) => <InlineView key={i} node={n} paraPPr={p.pPr} ctx={ctx} />)}
+          <br />
+        </>
+      ) : p.children.length ? (
+        p.children.map((n, i) => <InlineView key={i} node={n} paraPPr={p.pPr} ctx={ctx} />)
+      ) : (
+        <br />
+      )}
     </p>
   );
 }
