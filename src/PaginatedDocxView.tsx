@@ -250,6 +250,14 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
     }
     root.querySelectorAll(":scope > *").forEach((el) => bottoms.add(Math.round((el.getBoundingClientRect().bottom - top) / scale)));
     const sorted = [...bottoms].filter((b) => b > 0).sort((a, b) => a - b);
+    // Table rows must not be sliced across a page boundary (the slice cuts cell text mid-line and the
+    // continuation overlaps the row's border on the next page). Collect each row's [top, bottom] flow
+    // range as an atomic region so a break lands at the row's top instead of through it.
+    const rowRanges: [number, number][] = [];
+    root.querySelectorAll("tr").forEach((tr) => {
+      const r = tr.getBoundingClientRect();
+      rowRanges.push([Math.round((r.top - top) / scale), Math.round((r.bottom - top) / scale)]);
+    });
     // How far the first-page header pokes below the normal top margin. The logo band usually fits the
     // top-margin slack, so the page-1 body is only NUDGED down by this (into the same slack) — page 1
     // keeps its full content height, matching Word (which doesn't drop a row to show the letterhead).
@@ -268,7 +276,11 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
       const hH = defaultHeaderRef.current.getBoundingClientRect().height / scale;
       defaultExtra = Math.min(geo.padBottom, Math.max(0, Math.round(geo.headerTop + hH + 6 - geo.padTop)));
     }
-    setLayout({ breaks: computePageBreaks(sorted, geo.contentHeight - defaultExtra), total: root.scrollHeight, firstExtra, defaultExtra });
+    // Later pages reserve the default header's overflow; page 1 reserves the first-page header's
+    // overflow when there is one (it shows the first header, not the default), else the default's.
+    const body = geo.contentHeight - defaultExtra;
+    const firstBody = geo.contentHeight - (usesFirstHeader ? firstExtra : defaultExtra);
+    setLayout({ breaks: computePageBreaks(sorted, body, firstBody, rowRanges), total: root.scrollHeight, firstExtra, defaultExtra });
   }, [blockNodes, headerNodesDefault, headerNodesFirst, usesFirstHeader, geo.contentWidth, geo.contentHeight, geo.headerTop, geo.padTop, geo.padBottom, fontsReady]);
 
   return (

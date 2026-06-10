@@ -44,5 +44,21 @@ describe("paginate: computePageBreaks (line-level)", () => {
   it("firstContentHeight defaults to contentHeight (no special first page)", () => {
     expect(computePageBreaks([20, 40, 60, 80, 100], 50)).toEqual([0, 40, 80]);
   });
+
+  it("does not split a table row across pages — pulls the break to the row's top", () => {
+    // A row occupies y∈[40,90] (lines at 60,80). The natural break at 60 would slice it; instead the
+    // whole row moves to page 2 (break at 40).
+    expect(computePageBreaks([20, 40, 60, 80, 100, 120], 70, 70, [[40, 90]])).toEqual([0, 40, 100]);
+  });
+
+  it("splits a row taller than a page (force progress, no infinite loop)", () => {
+    // Row [10,200] is taller than the 70 page → splitting is unavoidable; falls back to line breaks.
+    expect(computePageBreaks([50, 100, 150, 200], 70, 70, [[10, 200]])).toEqual([0, 50, 100, 150]);
+  });
+
+  it("allows a break at a row boundary (touching, not bisecting)", () => {
+    // Break candidate exactly at a row's edge is fine — not strictly inside.
+    expect(computePageBreaks([20, 40, 60, 80], 40, 40, [[40, 80]])).toEqual([0, 40]);
+  });
 });
 
