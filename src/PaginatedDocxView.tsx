@@ -90,6 +90,18 @@ function hasAnchoredDrawing(p: Paragraph): boolean {
   return p.children.some((n) => n.type === "drawing" && n.anchored && (n.anchorXEmu != null || n.anchorYEmu != null));
 }
 
+// True when none of a paragraph's children contribute IN-FLOW height — every child is either an
+// anchored (floating) drawing (absolutely positioned, no line box) or a whitespace-only run (CSS
+// white-space:normal collapses a lone space to nothing → no line box). Word still reserves a line for
+// such a paragraph (the paragraph mark), so we emit a <br> to match; without it the paragraph
+// collapses to 0px and content anchored to a LATER paragraph (e.g. a header logo's badge row) rides
+// up over the earlier floating images.
+function isFloatingOnly(p: Paragraph): boolean {
+  return p.children.length > 0 && p.children.every(
+    (n) => (n.type === "drawing" && n.anchored) || (n.type === "run" && !(n.text ?? "").trim()),
+  );
+}
+
 // One OOXML border edge → a CSS border value, or undefined for "no edge". val "none"/"nil" (or an
 // absent side) means Word draws nothing — the previous code drew a 1px rule on EVERY cell regardless,
 // turning borderless tables into a heavy grid. sz is in eighths of a point.
@@ -108,6 +120,7 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
       <p key={key} style={{ margin: 0, ...paragraphCss(eff), ...(hasAnchoredDrawing(b) ? { position: "relative" } : null) }}>
         {marker !== undefined && <span style={{ ...runCss(markerRunProps(ctx.sheet, ctx.numbering, b.pPr)), marginRight: "0.4em" }}>{marker}</span>}
         {b.children.length ? b.children.map((n, i) => <Inline key={i} node={n} paraPPr={b.pPr} ctx={ctx} />) : <br />}
+        {isFloatingOnly(b) && <br />}
       </p>
     );
   }

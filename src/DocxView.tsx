@@ -71,6 +71,7 @@ function ParagraphView({ p, ctx }: { p: Paragraph; ctx: Ctx }): React.ReactEleme
         </span>
       )}
       {p.children.length ? p.children.map((n, i) => <InlineView key={i} node={n} paraPPr={p.pPr} ctx={ctx} />) : <br />}
+      {p.children.length > 0 && p.children.every((n) => (n.type === "drawing" && n.anchored) || (n.type === "run" && !(n.text ?? "").trim())) && <br />}
     </p>
   );
 }
