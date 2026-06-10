@@ -27,6 +27,7 @@ interface Ctx {
   pkg: DocxPackage;
   relsPart: string;   // rels file images/links in this container resolve against (body vs header/footer)
   page?: { num: number; total: number };   // current/total page, for live PAGE/NUMPAGES field runs (footer)
+  tableStyleId?: string;   // style of the enclosing table → applies to cell paragraphs/runs (Word cascade)
 }
 
 const renderText = (text: string): React.ReactNode[] => {
@@ -43,7 +44,7 @@ const renderText = (text: string): React.ReactNode[] => {
 
 function Inline({ node, paraPPr, ctx }: { node: Inline; paraPPr: Paragraph["pPr"]; ctx: Ctx }): React.ReactElement | null {
   if (node.type === "run") {
-    const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, paraPPr, node.rPr));
+    const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, paraPPr, node.rPr, ctx.tableStyleId));
     // Live page-number fields (footer): show the current/total page, not the stale cached text.
     const text = node.field && ctx.page ? String(node.field === "PAGE" ? ctx.page.num : ctx.page.total) : node.text;
     return <span style={node.track ? { ...css, ...trackCss(node.track.type) } : css}>{renderText(text)}</span>;
@@ -101,7 +102,7 @@ function borderCss(s?: BorderSide): string | undefined {
 
 function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
   if (b.type === "paragraph") {
-    const eff = effectiveParagraphProps(ctx.sheet, ctx.numbering, b.pPr);
+    const eff = effectiveParagraphProps(ctx.sheet, ctx.numbering, b.pPr, ctx.tableStyleId);
     const marker = ctx.markers.get(b);
     return (
       <p key={key} style={{ margin: 0, ...paragraphCss(eff), ...(hasAnchoredDrawing(b) ? { position: "relative" } : null) }}>
@@ -118,6 +119,9 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
   const tb: typeof b.borders = styleBorders || b.borders ? { ...styleBorders, ...b.borders } : undefined;
   const lastRow = grid.length - 1;
   const totalCols = b.grid.length;
+  // Cell paragraphs resolve against the TABLE STYLE too (e.g. TableGrid sets spacing-after 0 / single
+  // line) — Word's cascade. Nested tables override with their own style id.
+  const cellCtx: Ctx = b.styleId ? { ...ctx, tableStyleId: b.styleId } : ctx;
   return (
     <table key={key} style={{ borderCollapse: "collapse", tableLayout: "fixed", width: total ? twipsToPx(total) : "100%", margin: "0 0 8px" }}>
       {/* w:tblGrid → <colgroup>: without explicit column widths, table-layout:fixed distributes
@@ -146,7 +150,7 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
               return (
                 <td key={ci} colSpan={rc.colSpan > 1 ? rc.colSpan : undefined} rowSpan={rc.rowSpan > 1 ? rc.rowSpan : undefined}
                   style={{ borderTop: top, borderRight: right, borderBottom: bottom, borderLeft: left, background: rc.cell.props.shd ? `#${rc.cell.props.shd}` : undefined, padding: "2px 5px", verticalAlign: rc.cell.props.vAlign === "center" ? "middle" : (rc.cell.props.vAlign ?? "top") }}>
-                  {rc.cell.blocks.map((cb, bi) => renderBlock(cb, ctx, bi))}
+                  {rc.cell.blocks.map((cb, bi) => renderBlock(cb, cellCtx, bi))}
                 </td>
               );
             })}</tr>

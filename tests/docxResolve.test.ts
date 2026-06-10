@@ -5,12 +5,16 @@ import { parseDocument, type Paragraph } from "../src/model";
 import { effectiveRunProps, effectiveParagraphProps, assignListNumbers } from "../src/resolve";
 
 const STYLES = `<w:styles>
-  <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/><w:rFonts w:ascii="Calibri"/></w:rPr></w:rPrDefault></w:docDefaults>
+  <w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/><w:rFonts w:ascii="Calibri"/></w:rPr></w:rPrDefault>
+    <w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
   <w:style w:type="paragraph" w:styleId="Heading1">
     <w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="0"/></w:pPr>
     <w:rPr><w:b/><w:sz w:val="32"/></w:rPr>
   </w:style>
   <w:style w:type="character" w:styleId="Strong"><w:rPr><w:color w:val="FF0000"/></w:rPr></w:style>
+  <w:style w:type="table" w:styleId="TableGrid">
+    <w:basedOn w:val="TableNormal"/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr>
+  </w:style>
 </w:styles>`;
 
 const NUMBERING = `<w:numbering>
@@ -40,6 +44,24 @@ describe("resolve: effective property cascade", () => {
     expect(rPr.color).toBe("FF0000");
   });
 
+  it("a table style's pPr applies to cell paragraphs (spacing-after reset, single line)", () => {
+    // Outside a table: cell-less paragraph inherits docDefaults spacing-after 160 / line 259.
+    const flow = effectiveParagraphProps(sheet, numbering, {});
+    expect(flow.spacing?.after).toBe(160);
+    expect(flow.spacing?.line).toBe(259);
+    // Inside a TableGrid cell: the table style resets after→0 and line→240 (Word's cascade).
+    const inCell = effectiveParagraphProps(sheet, numbering, {}, "TableGrid");
+    expect(inCell.spacing?.after).toBe(0);
+    expect(inCell.spacing?.line).toBe(240);
+  });
+
+  it("a paragraph's own pStyle still beats the table style", () => {
+    // Heading1 sets after=0 before=240; the table style must not clobber the paragraph style.
+    const eff = effectiveParagraphProps(sheet, numbering, { styleId: "Heading1" }, "TableGrid");
+    expect(eff.spacing?.after).toBe(0);
+    expect(eff.spacing?.before).toBe(240);
+  });
+
   it("direct run formatting overrides the style", () => {
     const rPr = effectiveRunProps(sheet, numbering, { styleId: "Heading1" }, { bold: false, fontSize: 10 });
     expect(rPr.bold).toBe(false);
@@ -50,7 +72,8 @@ describe("resolve: effective property cascade", () => {
     const pPr = effectiveParagraphProps(sheet, numbering, { styleId: "Heading1", alignment: "center" });
     expect(pPr.keepNext).toBe(true);
     expect(pPr.alignment).toBe("center");
-    expect(pPr.spacing).toEqual({ before: 240, after: 0 });
+    // before/after from Heading1; line/lineRule inherited from docDefaults pPrDefault.
+    expect(pPr.spacing).toEqual({ before: 240, after: 0, line: 259, lineRule: "auto" });
   });
 });
 

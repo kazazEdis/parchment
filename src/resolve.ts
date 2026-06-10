@@ -12,13 +12,22 @@ import { type Numbering, getLevel, formatMarker } from "./numbering";
 import { type RunProps, type ParagraphProps, mergeRunProps, mergeParagraphProps } from "./props";
 import { type DocumentModel, type Block, type Paragraph } from "./model";
 
-/** Effective paragraph props for a paragraph: docDefaults → style → numbering level → direct. */
+/**
+ * Effective paragraph props: docDefaults → table style → paragraph style → numbering → direct.
+ * `tableStyleId` is the style of the enclosing table (when this paragraph is inside a cell); its
+ * pPr applies to every paragraph in the table (e.g. TableGrid resets spacing-after to 0 and line to
+ * single) and sits BELOW the paragraph's own style so a pStyle still wins. Word applies this; without
+ * it cell paragraphs wrongly inherit the document's docDefaults spacing and tables render too tall.
+ */
 export function effectiveParagraphProps(
   sheet: StyleSheet,
   numbering: Numbering | undefined,
   pPr: ParagraphProps,
+  tableStyleId?: string,
 ): ParagraphProps {
-  let out = mergeParagraphProps(sheet.docDefaults.pPr, paragraphStyleChain(sheet, pPr.styleId).pPr);
+  let out = sheet.docDefaults.pPr;
+  if (tableStyleId) out = mergeParagraphProps(out, paragraphStyleChain(sheet, tableStyleId).pPr);
+  out = mergeParagraphProps(out, paragraphStyleChain(sheet, pPr.styleId).pPr);
   if (numbering && pPr.numbering) {
     const lvl = getLevel(numbering, pPr.numbering.numId, pPr.numbering.level);
     if (lvl) out = mergeParagraphProps(out, lvl.pPr);
@@ -35,8 +44,11 @@ export function effectiveRunProps(
   numbering: Numbering | undefined,
   paragraphPPr: ParagraphProps,
   runRPr: RunProps,
+  tableStyleId?: string,
 ): RunProps {
-  let out = mergeRunProps(sheet.docDefaults.rPr, paragraphStyleChain(sheet, paragraphPPr.styleId).rPr);
+  let out = sheet.docDefaults.rPr;
+  if (tableStyleId) out = mergeRunProps(out, paragraphStyleChain(sheet, tableStyleId).rPr);
+  out = mergeRunProps(out, paragraphStyleChain(sheet, paragraphPPr.styleId).rPr);
   if (numbering && paragraphPPr.numbering) {
     const lvl = getLevel(numbering, paragraphPPr.numbering.numId, paragraphPPr.numbering.level);
     if (lvl) out = mergeRunProps(out, lvl.rPr);

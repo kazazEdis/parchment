@@ -22,6 +22,7 @@ interface Ctx {
   numbering: Numbering;
   markers: Map<Paragraph, string>;
   pkg: DocxPackage;
+  tableStyleId?: string;   // enclosing table style → applies to cell paragraphs/runs (Word cascade)
 }
 
 function renderText(text: string): React.ReactNode[] {
@@ -39,7 +40,7 @@ function renderText(text: string): React.ReactNode[] {
 
 function InlineView({ node, paraPPr, ctx }: { node: Inline; paraPPr: ParagraphProps; ctx: Ctx }): React.ReactElement | null {
   if (node.type === "run") {
-    const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, paraPPr, node.rPr));
+    const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, paraPPr, node.rPr, ctx.tableStyleId));
     return <span style={node.track ? { ...css, ...trackCss(node.track.type) } : css}>{renderText(node.text)}</span>;
   }
   if (node.type === "hyperlink") {
@@ -60,7 +61,7 @@ function InlineView({ node, paraPPr, ctx }: { node: Inline; paraPPr: ParagraphPr
 }
 
 function ParagraphView({ p, ctx }: { p: Paragraph; ctx: Ctx }): React.ReactElement {
-  const eff = effectiveParagraphProps(ctx.sheet, ctx.numbering, p.pPr);
+  const eff = effectiveParagraphProps(ctx.sheet, ctx.numbering, p.pPr, ctx.tableStyleId);
   const marker = ctx.markers.get(p);
   return (
     <p style={{ margin: 0, ...paragraphCss(eff) }}>
@@ -77,6 +78,7 @@ function ParagraphView({ p, ctx }: { p: Paragraph; ctx: Ctx }): React.ReactEleme
 function TableView({ t, ctx }: { t: Table; ctx: Ctx }): React.ReactElement {
   const grid = resolveTableGrid(t);
   const totalTwips = t.grid.reduce((a, b) => a + b, 0);
+  const cellCtx: Ctx = t.styleId ? { ...ctx, tableStyleId: t.styleId } : ctx;
   return (
     <table style={{ borderCollapse: "collapse", tableLayout: "fixed", width: totalTwips ? twipsToPx(totalTwips) : "100%", margin: "0 0 8px" }}>
       {totalTwips > 0 && (
@@ -97,7 +99,7 @@ function TableView({ t, ctx }: { t: Table; ctx: Ctx }): React.ReactElement {
                 style={{ border: "1px solid #b3b3b3", padding: "2px 5px", verticalAlign: "top" }}
               >
                 {rc.cell.blocks.map((b, bi) => (
-                  <BlockView key={bi} block={b} ctx={ctx} />
+                  <BlockView key={bi} block={b} ctx={cellCtx} />
                 ))}
               </td>
             ))}
