@@ -42,7 +42,7 @@ describe("cssMap: paragraph props → CSS", () => {
       textIndent: 24,
       marginTop: 16,
       marginBottom: 8,
-      lineHeight: 1.5, // 360/240
+      lineHeight: 1.7249999999999999, // (360/240) × 1.15 Word natural-single-line factor
     });
   });
 

@@ -74,6 +74,11 @@ const ALIGN: Record<string, CSSProperties["textAlign"]> = {
   both: "justify", distribute: "justify",
 };
 
+// Word's "single" line spacing (w:line=240, lineRule=auto) = the font's natural line height, not the
+// em. For Calibri/Carlito (this engine's metric-default font) that is ~1.15× the font size, measured
+// against LibreOffice/Word at 1.17. Matches the page container's default lineHeight (1.15).
+const WORD_SINGLE_LINE = 1.15;
+
 /** Resolved paragraph props → inline CSS for a block. */
 export function paragraphCss(p: ParagraphProps): CSSProperties {
   const css: CSSProperties = {};
@@ -91,7 +96,12 @@ export function paragraphCss(p: ParagraphProps): CSSProperties {
     if (p.spacing.after !== undefined) css.marginBottom = twipsToPx(p.spacing.after);
     if (p.spacing.line !== undefined) {
       css.lineHeight = (p.spacing.lineRule ?? "auto") === "auto"
-        ? lineAutoToMultiple(p.spacing.line)
+        // OOXML auto line is a multiple of SINGLE line spacing, and Word's single line = the font's
+        // natural line metrics (~1.15× the em for Calibri/Carlito), NOT 1.0× the font size. CSS
+        // `line-height: 1.0` is too tight: text measured 9.76pt/line where Word gives 11.74pt, which
+        // accumulates (a 6-line block 12pt short → header rules ride up, tables ~13px under Word).
+        // Scale the multiple by the natural-line factor so "single" renders like Word.
+        ? lineAutoToMultiple(p.spacing.line) * WORD_SINGLE_LINE
         : `${twipsToPx(p.spacing.line)}px`;
     }
   }
