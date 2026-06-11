@@ -20,7 +20,7 @@ import { parseComments } from "./comments";
 import { broadcastChannelTransport } from "./collab";
 import { createXmlCrdt, type XmlCrdt, type PeerPresence } from "./crdt";
 import { parseDocument, type Block, type Paragraph, type Run, type Inline } from "./model";
-import { type StyleSheet } from "./styles";
+import { resolveTableStyleBorders, type StyleSheet } from "./styles";
 import { type Numbering } from "./numbering";
 import { effectiveParagraphProps, effectiveRunProps, markerRunProps, assignListNumbers } from "./resolve";
 import { paragraphCss, runCss, trackCss } from "./cssMap";
@@ -31,6 +31,8 @@ import { insertImage } from "./imageInsert";
 import { wrapHyperlink } from "./linkEdit";
 import { ommlToMathML } from "./math";
 import { addRelationship } from "./opcParts";
+import { resolveTableGrid } from "./table";
+import { cellBorderStyle } from "./tableCss";
 import type { Table } from "./model";
 import { patchParagraph, patchSpan, patchAll, emitParagraph } from "./serialize";
 import { twipsToPx } from "./units";
@@ -546,9 +548,9 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
   const page = { width: twipsToPx(sec?.pageSize?.width ?? 11906), padding: `${twipsToPx(m.top ?? 1440)}px ${twipsToPx(m.right ?? 1440)}px ${twipsToPx(m.bottom ?? 1440)}px ${twipsToPx(m.left ?? 1440)}px` };
   let pIndex = -1;
 
-  const renderInlineStatic = (n: Inline, paraPPr: Paragraph["pPr"], key: number): React.ReactNode => {
+  const renderInlineStatic = (n: Inline, paraPPr: Paragraph["pPr"], key: number, tableStyleId?: string): React.ReactNode => {
     if (n.type === "run") {
-      const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, paraPPr, n.rPr));
+      const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, paraPPr, n.rPr, tableStyleId));
       return <span key={key} style={n.track ? { ...css, ...trackCss(n.track.type) } : css}>{renderRunText(n.text)}</span>;
     }
     if (n.type === "hyperlink") return <a key={key} style={{ color: "#0563C1", textDecoration: "underline" }}>{n.children.map((c, i) => renderInlineStatic(c, paraPPr, i))}</a>;
@@ -557,17 +559,21 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
     return null;
   };
 
-  const renderParagraph = (p: Paragraph): React.ReactElement => {
+  const renderParagraph = (p: Paragraph, tableStyleId?: string): React.ReactElement => {
     pIndex += 1;
     const index = pIndex;
-    const eff = effectiveParagraphProps(ctx.sheet, ctx.numbering, p.pPr);
+    const eff = effectiveParagraphProps(ctx.sheet, ctx.numbering, p.pPr, tableStyleId);
+    // Dominant ascii font → the per-font single-line factor (Cambria header vs Calibri body), so cell
+    // line heights match the print renderer instead of inflating against docDefaults.
+    const firstRun = p.children.find((n): n is Run => n.type === "run");
+    const font = effectiveRunProps(ctx.sheet, ctx.numbering, p.pPr, firstRun?.rPr ?? {}, tableStyleId).fonts?.ascii;
     const marker = ctx.markers.get(p);
     const markerEl = marker !== undefined ? <span data-marker contentEditable={false} style={{ ...runCss(markerRunProps(ctx.sheet, ctx.numbering, p.pPr)), userSelect: "none", marginRight: "0.4em" }}>{marker}</span> : null;
     const runs = p.children.filter((n): n is Run => n.type === "run");
     const hasText = runs.some((r) => r.text.length > 0);
 
     if (!isPureRuns(p)) {
-      return <p key={index} style={{ margin: 0, ...paragraphCss(eff) }}>{markerEl}{p.children.length ? p.children.map((n, i) => renderInlineStatic(n, p.pPr, i)) : <br />}</p>;
+      return <p key={index} style={{ margin: 0, ...paragraphCss(eff, font) }}>{markerEl}{p.children.length ? p.children.map((n, i) => renderInlineStatic(n, p.pPr, i, tableStyleId)) : <br />}</p>;
     }
     return (
       <p
@@ -578,12 +584,12 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
         onFocus={(e) => { setActiveIndex(index); activeElRef.current = e.currentTarget; }}
         onBlur={(e) => commitBlur(index, e.currentTarget)}
         onPaste={(e) => onPaste(index, e.currentTarget, e)}
-        style={{ margin: 0, outline: activeIndex === index ? "1px solid #1C5742" : "none", borderRadius: 2, ...paragraphCss(eff) }}
+        style={{ margin: 0, outline: activeIndex === index ? "1px solid #1C5742" : "none", borderRadius: 2, ...paragraphCss(eff, font) }}
       >
         {markerEl}
         {hasText
           ? runs.filter((r) => r.text.length > 0).map((r, i) => {
-              const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, p.pPr, r.rPr));
+              const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, p.pPr, r.rPr, tableStyleId));
               return <span key={i} data-ri={i} style={r.track ? { ...css, ...trackCss(r.track.type) } : css}>{renderRunText(r.text)}</span>;
             })
           : <br />}
@@ -591,15 +597,45 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
     );
   };
 
-  const renderBlock = (b: Block, key: number): React.ReactElement => {
-    if (b.type === "paragraph") return <React.Fragment key={key}>{renderParagraph(b)}</React.Fragment>;
-    const totalTwips = b.grid.reduce((a, c) => a + c, 0);
+  const renderBlock = (b: Block, key: number, tableStyleId?: string): React.ReactElement => {
+    if (b.type === "paragraph") return <React.Fragment key={key}>{renderParagraph(b, tableStyleId)}</React.Fragment>;
+    const total = b.grid.reduce((a, c) => a + c, 0);
+    const grid = resolveTableGrid(b);
+    // Effective table borders = table style (e.g. TableGrid) overridden by inline w:tblBorders; cell
+    // w:tcBorders override per side below. Cell paragraphs cascade against the table style too — share
+    // the exact resolution the print/preview renderer uses (tableCss) so the canvas matches it.
+    const styleBorders = resolveTableStyleBorders(ctx.sheet, b.styleId);
+    const tb: typeof b.borders = styleBorders || b.borders ? { ...styleBorders, ...b.borders } : undefined;
+    const lastRow = grid.length - 1;
+    const totalCols = b.grid.length;
+    const cellStyleId = b.styleId ?? tableStyleId;   // nested tables keep their own style; else inherit
     return (
-      <table key={key} style={{ borderCollapse: "collapse", tableLayout: "fixed", width: totalTwips ? twipsToPx(totalTwips) : "100%", margin: "0 0 8px" }}>
+      <table key={key} style={{ borderCollapse: "collapse", tableLayout: "fixed", width: total ? twipsToPx(total) : "100%", margin: "0 0 8px" }}>
+        {/* w:tblGrid → <colgroup>: without it table-layout:fixed spreads columns EQUALLY, ignoring the
+            docx grid (a narrow label + wide content column collapse to uniform stripes). */}
+        {total > 0 && (
+          <colgroup>
+            {b.grid.map((w, i) => <col key={i} style={{ width: `${((w / total) * 100).toFixed(3)}%` }} />)}
+          </colgroup>
+        )}
         <tbody>
-          {b.rows.map((row, ri) => (
-            <tr key={ri}>{row.cells.map((cell, ci) => <td key={ci} style={{ border: "1px solid #b3b3b3", padding: "2px 5px", verticalAlign: "top" }}>{cell.blocks.map((cb, bi) => renderBlock(cb, bi))}</td>)}</tr>
-          ))}
+          {grid.map((cells, ri) => {
+            let col = 0;
+            return (
+              <tr key={ri}>{cells.map((rc, ci) => {
+                const firstCol = col === 0;
+                const lastCol = col + rc.colSpan >= totalCols;
+                const borders = cellBorderStyle(tb, rc.cell.props.borders, { firstRow: ri === 0, lastRow: ri === lastRow, firstCol, lastCol });
+                col += rc.colSpan;
+                return (
+                  <td key={ci} colSpan={rc.colSpan > 1 ? rc.colSpan : undefined} rowSpan={rc.rowSpan > 1 ? rc.rowSpan : undefined}
+                    style={{ ...borders, background: rc.cell.props.shd ? `#${rc.cell.props.shd}` : undefined, padding: "2px 5px", verticalAlign: rc.cell.props.vAlign === "center" ? "middle" : (rc.cell.props.vAlign ?? "top") }}>
+                    {rc.cell.blocks.map((cb, bi) => renderBlock(cb, bi, cellStyleId))}
+                  </td>
+                );
+              })}</tr>
+            );
+          })}
         </tbody>
       </table>
     );
