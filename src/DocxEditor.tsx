@@ -80,13 +80,15 @@ function runsFromDom(el: HTMLElement, original: Paragraph): Run[] {
   const originalRuns = original.children.filter((n): n is Run => n.type === "run");
   const out: Run[] = [];
   el.childNodes.forEach((node) => {
-    if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).dataset.marker != null) return;
-    const text = node.textContent ?? "";
+    const elNode = node.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : null;
+    if (elNode?.dataset.marker != null) return;
+    // An atomic token pill shows a label but its MODEL text is the raw {tag} in data-raw.
+    const text = elNode?.dataset.raw != null ? elNode.dataset.raw : (node.textContent ?? "");
     if (!text) return;
     let rPr: Run["rPr"] = {};
     let track: Run["track"];
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const ri = (node as HTMLElement).dataset.ri;
+    if (elNode) {
+      const ri = elNode.dataset.ri;
       const r = ri != null ? originalRuns[Number(ri)] : undefined;
       if (r) { rPr = r.rPr; track = r.track; }
       else if (out.length) { rPr = out[out.length - 1].rPr; track = out[out.length - 1].track; }
@@ -105,10 +107,11 @@ function caretOffset(paraEl: HTMLElement, container: Node, offset: number): numb
   const spans = Array.from(paraEl.querySelectorAll<HTMLElement>("span[data-ri]"));
   for (const span of spans) {
     const tn = span.firstChild;
-    const len = span.textContent?.length ?? 0;
-    if (container === tn) return total + offset;
+    const raw = span.dataset.raw;                       // atomic pill → its model length is the raw {tag}
+    const len = raw != null ? raw.length : (span.textContent?.length ?? 0);
+    if (container === tn) return total + (raw != null ? (offset > 0 ? len : 0) : offset);
     if (container === span) return total + (offset > 0 ? len : 0);
-    if (span.contains(container)) return total + offset;
+    if (span.contains(container)) return total + (raw != null ? len : offset);
     total += len;
   }
   return total;
@@ -135,9 +138,14 @@ function currentSelection(): Sel | null {
 function locateOffset(paraEl: HTMLElement, offset: number): { node: Node; off: number } {
   let total = 0;
   for (const span of Array.from(paraEl.querySelectorAll<HTMLElement>("span[data-ri]"))) {
-    const tn = span.firstChild ?? span;
-    const len = span.textContent?.length ?? 0;
-    if (offset <= total + len) return { node: tn, off: offset - total };
+    const raw = span.dataset.raw;
+    const len = raw != null ? raw.length : (span.textContent?.length ?? 0);
+    if (offset <= total + len) {
+      // An atomic pill can't hold a caret inside it — land just before or just after the whole pill.
+      if (raw != null) return offset <= total ? { node: span, off: 0 } : { node: span, off: span.childNodes.length };
+      const tn = span.firstChild ?? span;
+      return { node: tn, off: offset - total };
+    }
     total += len;
   }
   return { node: paraEl, off: paraEl.childNodes.length };
@@ -157,6 +165,25 @@ function restoreSelection(paraEl: HTMLElement, start: number, end: number): void
   } catch {
     /* offsets out of range after a structural change — ignore */
   }
+}
+
+/** True if a Backspace/Delete here would remove a "locked" pill (a structural template control that
+ *  must stay intact): a collapsed caret sitting against one in the delete direction, or a ranged
+ *  selection that encloses one. */
+function deletionHitsLocked(dir: "back" | "fwd"): boolean {
+  const sel = typeof window !== "undefined" ? window.getSelection() : null;
+  if (!sel || sel.rangeCount === 0) return false;
+  const r = sel.getRangeAt(0);
+  if (!sel.isCollapsed) return !!r.cloneContents().querySelector("[data-token='locked']");
+  const node = r.startContainer;
+  const off = r.startOffset;
+  if (node.nodeType === Node.TEXT_NODE) {
+    if (dir === "back" ? off > 0 : off < (node.textContent?.length ?? 0)) return false;
+    const sib = dir === "back" ? node.previousSibling : node.nextSibling;
+    return (sib as HTMLElement | null)?.dataset?.token === "locked";
+  }
+  const child = dir === "back" ? node.childNodes[off - 1] : node.childNodes[off];
+  return (child as HTMLElement | null)?.dataset?.token === "locked";
 }
 
 /** Parse pasted text/html (Word puts rich HTML on the clipboard) into runs; falls back to plain text. */
@@ -254,10 +281,12 @@ function appendRunToParagraph(documentXml: string, p: Paragraph, runXml: string)
 
 // A run's text split for display: plain "text" plus optional template tokens the host wants to
 // highlight as inline pills — "field" (a value placeholder) or "locked" (a structural control the
-// user shouldn't break). The engine stays template-agnostic: the HOST supplies `tokenize`. Tokens
-// remain editable (the pill is purely visual) so the caret/commit math is unchanged; concatenating
-// every token's `text` MUST reproduce the input exactly, or the model round-trip breaks.
-export type EditorToken = { text: string; kind: "text" | "field" | "locked" };
+// user shouldn't break). The engine stays template-agnostic: the HOST supplies `tokenize`.
+// A "field"/"locked" token renders as an ATOMIC, non-editable pill: it shows `label` (falls back to
+// `text`) but its MODEL text is always `text`, carried in data-raw so the DOM→model commit + caret
+// math read the real {tag} regardless of the visible label. Concatenating every token's `text` MUST
+// reproduce the input exactly. Locked tokens additionally can't be deleted (they'd break a loop).
+export type EditorToken = { text: string; kind: "text" | "field" | "locked"; label?: string };
 
 const TOKEN_STYLE: Record<"field" | "locked", React.CSSProperties> = {
   field:  { background: "#E8F0EC", color: "#1C5742", borderRadius: 4, padding: "0 3px", boxShadow: "inset 0 0 0 1px #C5DAD0" },
@@ -542,9 +571,12 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
     if (activeIndex == null || !activeElRef.current) return;
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); splitActive(); }
     else if (e.key === "Tab") { e.preventDefault(); indentActive(e.shiftKey ? -1 : 1); }
-    else if (e.key === "Backspace") {
-      const sel = currentSelection();
-      if (sel && sel.index === activeIndex && sel.start === 0 && sel.end === 0 && activeIndex > 0) { e.preventDefault(); mergeActive(); }
+    else if (e.key === "Backspace" || e.key === "Delete") {
+      if (deletionHitsLocked(e.key === "Backspace" ? "back" : "fwd")) { e.preventDefault(); return; }   // protect loop controls
+      if (e.key === "Backspace") {
+        const sel = currentSelection();
+        if (sel && sel.index === activeIndex && sel.start === 0 && sel.end === 0 && activeIndex > 0) { e.preventDefault(); mergeActive(); }
+      }
     }
   }, [activeIndex, onBold, onItalic, onUnderline, splitActive, mergeActive, indentActive]);
 
@@ -567,10 +599,15 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
   const runSpans = (text: string, baseStyle: React.CSSProperties, track: Run["track"], keyBase: string, ri?: number): React.ReactNode[] => {
     const segs = tokenize ? tokenize(text) : [{ text, kind: "text" as const }];
     return segs.filter((s) => s.text).map((s, si) => {
-      const style = s.kind === "text" ? baseStyle : { ...baseStyle, ...TOKEN_STYLE[s.kind] };
+      if (s.kind === "text") {
+        return <span key={`${keyBase}-${si}`} data-ri={ri} style={track ? { ...baseStyle, ...trackCss(track.type) } : baseStyle}>{renderRunText(s.text)}</span>;
+      }
+      // Atomic pill: non-editable, shows the label, but carries the raw {tag} in data-raw so the
+      // commit + caret math use the real model text. title surfaces the actual tag on hover.
+      const style = { ...baseStyle, ...TOKEN_STYLE[s.kind], cursor: s.kind === "locked" ? "not-allowed" : "default", userSelect: "all" as const };
       return (
-        <span key={`${keyBase}-${si}`} data-ri={ri} data-token={s.kind === "text" ? undefined : s.kind}
-          style={track ? { ...style, ...trackCss(track.type) } : style}>{renderRunText(s.text)}</span>
+        <span key={`${keyBase}-${si}`} data-ri={ri} data-token={s.kind} data-raw={s.text} contentEditable={false} title={s.text}
+          style={track ? { ...style, ...trackCss(track.type) } : style}>{s.label ?? s.text}</span>
       );
     });
   };

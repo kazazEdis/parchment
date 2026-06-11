@@ -1,6 +1,6 @@
 {
   "name": "parchment",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "Headless, MIT-licensed .docx engine + interactive web editor — byte-verbatim preserve-and-patch fidelity, line-level pagination, CRDT collaboration. Studied SuperDoc's architecture; contains no SuperDoc code.",
   "type": "module",
   "license": "MIT",
