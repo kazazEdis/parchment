@@ -48,6 +48,10 @@ const PML_TOOLBAR_CSS = `
 .pml-editor{font:13px/1.3 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#2b2b2b}
 .pml-tb{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;align-items:center;gap:3px;padding:6px 10px;background:#fff;border-bottom:1px solid #e6e1d6;box-shadow:0 1px 0 rgba(0,0,0,.02)}
 .pml-grp{display:flex;align-items:center;gap:2px}
+.pml-menu{position:absolute;top:100%;left:0;z-index:10;margin-top:3px;background:#fff;border:1px solid #e6e1d6;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.12);padding:4px;max-height:280px;overflow:auto;min-width:130px}
+.pml-menu-item{display:block;width:100%;text-align:left;padding:4px 9px;border:none;background:none;cursor:pointer;border-radius:4px;font-size:13px;color:#2b2b2b;white-space:nowrap}
+.pml-menu-item:hover{background:#f0ece2}
+.pml-ovl{position:fixed;inset:0;z-index:9}
 .pml-sep{width:1px;align-self:stretch;margin:3px 5px;background:#e6e1d6}
 .pml-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-width:32px;height:32px;padding:0 8px;border:1px solid transparent;background:transparent;border-radius:7px;cursor:pointer;color:#2b2b2b;font:inherit;line-height:1;transition:background .12s,border-color .12s,box-shadow .12s}
 .pml-btn:hover:not(:disabled){background:#F4F0E7}
@@ -293,7 +297,28 @@ const TOKEN_STYLE: Record<"field" | "locked", React.CSSProperties> = {
   locked: { background: "#FBF1DA", color: "#8A6A12", borderRadius: 4, padding: "0 3px", boxShadow: "inset 0 0 0 1px #E8D6A8" },
 };
 
-export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChange, tokenize }: { initialPackage: DocxPackage; collabChannel?: string; onAiRewrite?: (selectedText: string, instruction: string) => Promise<string>; onChange?: (doc: Doc) => void; tokenize?: (text: string) => EditorToken[] }): React.ReactElement {
+// Toolbar strings — host-overridable for localization (all optional; English defaults below).
+export interface EditorLabels {
+  undo?: string; redo?: string; bold?: string; italic?: string; underline?: string;
+  alignLeft?: string; alignCenter?: string; alignRight?: string; font?: string; size?: string;
+  find?: string; replace?: string; track?: string; accept?: string; reject?: string;
+  comment?: string; commentPrompt?: string; ai?: string; image?: string; link?: string;
+  addRow?: string; delRow?: string; addCol?: string; delCol?: string; download?: string;
+}
+const DEFAULT_LABELS: Required<EditorLabels> = {
+  undo: "Undo", redo: "Redo", bold: "Bold", italic: "Italic", underline: "Underline",
+  alignLeft: "Align left", alignCenter: "Align center", alignRight: "Align right", font: "Font", size: "Size",
+  find: "Find", replace: "Replace", track: "Track", accept: "Accept", reject: "Reject",
+  comment: "Comment", commentPrompt: "Comment:", ai: "AI", image: "Image", link: "Link",
+  addRow: "Add row", delRow: "Delete row", addCol: "Add column", delCol: "Delete column", download: "Download .docx",
+};
+const FONT_CHOICES = ["Calibri", "Arial", "Times New Roman", "Georgia", "Verdana", "Cambria", "Carlito"];
+const SIZE_CHOICES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36];
+
+export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChange, tokenize, labels, fonts }: { initialPackage: DocxPackage; collabChannel?: string; onAiRewrite?: (selectedText: string, instruction: string) => Promise<string>; onChange?: (doc: Doc) => void; tokenize?: (text: string) => EditorToken[]; labels?: EditorLabels; fonts?: string[] }): React.ReactElement {
+  const L = { ...DEFAULT_LABELS, ...labels };
+  const fontChoices = fonts && fonts.length ? fonts : FONT_CHOICES;
+  const [ttMenu, setTtMenu] = useState<"font" | "size" | null>(null);   // typography dropdown open state
   const [state, dispatch] = useReducer(reducer, undefined, () => ({ doc: fromPackage(initialPackage), past: [], future: [] }));
   const { doc } = state;
   // Notify the host of the current document on every change (initial + each edit) — lets a parent
@@ -409,6 +434,9 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
   const onBold = () => format((p, s, e) => formatRange(p, s, e, { bold: !rangeUniform(p, s, e, "bold") }), (p) => toggleBoolean(p, "bold"));
   const onItalic = () => format((p, s, e) => formatRange(p, s, e, { italic: !rangeUniform(p, s, e, "italic") }), (p) => toggleBoolean(p, "italic"));
   const onUnderline = () => format((p, s, e) => formatRange(p, s, e, { underline: rangeUnderlined(p, s, e) ? "none" : "single" }), (p) => toggleUnderline(p));
+  // Font family / size — apply to the selection, else the whole active paragraph (formatRange both ways).
+  const onFont = (name: string) => format((p, s, e) => formatRange(p, s, e, { fonts: { ascii: name } }), (p) => formatRange(p, 0, paragraphLength(p), { fonts: { ascii: name } }));
+  const onFontSize = (pt: number) => format((p, s, e) => formatRange(p, s, e, { fontSize: pt }), (p) => formatRange(p, 0, paragraphLength(p), { fontSize: pt }));
 
   const onPaste = useCallback((index: number, el: HTMLElement, e: React.ClipboardEvent) => {
     e.preventDefault();
@@ -728,40 +756,58 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
       <style>{PML_TOOLBAR_CSS}</style>
       <div className="pml-tb">
         <div className="pml-grp">
-          <button className="pml-btn" onMouseDown={md} onClick={() => dispatch({ type: "undo" })} disabled={!state.past.length} title="Undo (Ctrl+Z)"><span className="pml-ico">↶</span></button>
-          <button className="pml-btn" onMouseDown={md} onClick={() => dispatch({ type: "redo" })} disabled={!state.future.length} title="Redo (Ctrl+Y)"><span className="pml-ico">↷</span></button>
+          <button className="pml-btn" onMouseDown={md} onClick={() => dispatch({ type: "undo" })} disabled={!state.past.length} title={`${L.undo} (Ctrl+Z)`}><span className="pml-ico">↶</span></button>
+          <button className="pml-btn" onMouseDown={md} onClick={() => dispatch({ type: "redo" })} disabled={!state.future.length} title={`${L.redo} (Ctrl+Y)`}><span className="pml-ico">↷</span></button>
         </div>
         {sep}
         <div className="pml-grp">
-          <button className="pml-btn pml-b" onMouseDown={md} onClick={onBold} title="Bold (Ctrl+B)">B</button>
-          <button className="pml-btn pml-i" onMouseDown={md} onClick={onItalic} title="Italic (Ctrl+I)">I</button>
-          <button className="pml-btn pml-u" onMouseDown={md} onClick={onUnderline} title="Underline (Ctrl+U)">U</button>
+          <button className="pml-btn pml-b" onMouseDown={md} onClick={onBold} title={`${L.bold} (Ctrl+B)`}>B</button>
+          <button className="pml-btn pml-i" onMouseDown={md} onClick={onItalic} title={`${L.italic} (Ctrl+I)`}>I</button>
+          <button className="pml-btn pml-u" onMouseDown={md} onClick={onUnderline} title={`${L.underline} (Ctrl+U)`}>U</button>
         </div>
         {sep}
         <div className="pml-grp">
-          <button className="pml-btn" onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "left"))} title="Align left">{alignIcon("left")}</button>
-          <button className="pml-btn" onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "center"))} title="Align center">{alignIcon("center")}</button>
-          <button className="pml-btn" onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "right"))} title="Align right">{alignIcon("right")}</button>
+          <button className="pml-btn" onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "left"))} title={L.alignLeft}>{alignIcon("left")}</button>
+          <button className="pml-btn" onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "center"))} title={L.alignCenter}>{alignIcon("center")}</button>
+          <button className="pml-btn" onMouseDown={md} onClick={() => format((p) => p, (p) => setAlignment(p, "right"))} title={L.alignRight}>{alignIcon("right")}</button>
+        </div>
+        {sep}
+        {/* Font family + size — custom dropdowns (onMouseDown preventDefault keeps the editor selection,
+            so the choice applies to the current selection like B/I/U). */}
+        <div className="pml-grp" style={{ position: "relative" }}>
+          <button className="pml-btn pml-text" onMouseDown={(e) => { e.preventDefault(); setTtMenu(ttMenu === "font" ? null : "font"); }} title={L.font}>{L.font} ▾</button>
+          <button className="pml-btn pml-text" onMouseDown={(e) => { e.preventDefault(); setTtMenu(ttMenu === "size" ? null : "size"); }} title={L.size}>{L.size} ▾</button>
+          {ttMenu && <div className="pml-ovl" onMouseDown={(e) => { e.preventDefault(); setTtMenu(null); }} />}
+          {ttMenu === "font" && (
+            <div className="pml-menu">
+              {fontChoices.map((f) => <button key={f} className="pml-menu-item" style={{ fontFamily: f }} onMouseDown={(e) => { e.preventDefault(); onFont(f); setTtMenu(null); }}>{f}</button>)}
+            </div>
+          )}
+          {ttMenu === "size" && (
+            <div className="pml-menu">
+              {SIZE_CHOICES.map((s) => <button key={s} className="pml-menu-item" onMouseDown={(e) => { e.preventDefault(); onFontSize(s); setTtMenu(null); }}>{s}</button>)}
+            </div>
+          )}
         </div>
         {sep}
         <div className="pml-grp">
-          <input className="pml-field" placeholder="Find" value={find} onChange={(e) => setFind(e.target.value)} style={{ width: 90 }} />
-          <input className="pml-field" placeholder="Replace" value={replace} onChange={(e) => setReplace(e.target.value)} style={{ width: 90 }} />
-          <button className="pml-btn pml-text" onClick={doReplace}>Replace</button>
+          <input className="pml-field" placeholder={L.find} value={find} onChange={(e) => setFind(e.target.value)} style={{ width: 90 }} />
+          <input className="pml-field" placeholder={L.replace} value={replace} onChange={(e) => setReplace(e.target.value)} style={{ width: 90 }} />
+          <button className="pml-btn pml-text" onClick={doReplace}>{L.replace}</button>
         </div>
         {sep}
         <div className="pml-grp">
-          <label className="pml-chk" title="Record edits as tracked changes"><input type="checkbox" checked={track} onChange={(e) => setTrack(e.target.checked)} /> Track</label>
-          <button className="pml-btn pml-text" onClick={() => commit((d) => acceptAllChanges(d))} title="Accept all tracked changes">Accept</button>
-          <button className="pml-btn pml-text" onClick={() => commit((d) => rejectAllChanges(d))} title="Reject all tracked changes">Reject</button>
+          <label className="pml-chk" title="Record edits as tracked changes"><input type="checkbox" checked={track} onChange={(e) => setTrack(e.target.checked)} /> {L.track}</label>
+          <button className="pml-btn pml-text" onClick={() => commit((d) => acceptAllChanges(d))} title="Accept all tracked changes">{L.accept}</button>
+          <button className="pml-btn pml-text" onClick={() => commit((d) => rejectAllChanges(d))} title="Reject all tracked changes">{L.reject}</button>
           <button
             className="pml-btn"
             onMouseDown={md}
-            title="Comment on the active paragraph"
+            title={L.comment}
             onClick={() => {
               if (activeIndex == null) return;
               const sel = currentSelection(); // capture before the modal prompt collapses it
-              const text = window.prompt("Comment:");
+              const text = window.prompt(L.commentPrompt);
               if (!text) return;
               if (sel && sel.index === activeIndex && sel.end > sel.start) {
                 const s = sel;
@@ -774,21 +820,21 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
         </div>
         {sep}
         <div className="pml-grp">
-          {onAiRewrite && <button className="pml-btn pml-ai" onMouseDown={md} onClick={() => void onAi()} title="AI: rewrite the selection">✦ AI</button>}
-          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => fileInputRef.current?.click()} title="Insert image into the active paragraph">Image</button>
-          <button className="pml-btn pml-text" onMouseDown={md} onClick={onAddLink} title="Hyperlink the selection">Link</button>
+          {onAiRewrite && <button className="pml-btn pml-ai" onMouseDown={md} onClick={() => void onAi()} title="AI: rewrite the selection">✦ {L.ai}</button>}
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => fileInputRef.current?.click()} title={L.image}>{L.image}</button>
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={onAddLink} title={L.link}>{L.link}</button>
         </div>
         {sep}
         <div className="pml-grp" title="Table (inside a table cell)">
-          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp(insertRowAfter)} title="Add a row">+Row</button>
-          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp(deleteRow)} title="Delete the row">−Row</button>
-          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp((x, t) => appendColumn(x, t))} title="Add a column">+Col</button>
-          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp((x, t) => deleteColumn(x, t, 0))} title="Delete the first column">−Col</button>
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp(insertRowAfter)} title={L.addRow}>+R</button>
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp(deleteRow)} title={L.delRow}>−R</button>
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp((x, t) => appendColumn(x, t))} title={L.addCol}>+C</button>
+          <button className="pml-btn pml-text" onMouseDown={md} onClick={() => tableOp((x, t) => deleteColumn(x, t, 0))} title={L.delCol}>−C</button>
         </div>
         <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void onInsertImage(f); e.target.value = ""; }} />
         <span style={{ flex: 1 }} />
         {status && <span className="pml-status">{status}</span>}
-        <button className="pml-btn pml-primary" onClick={download} title="Download the edited .docx">Download .docx</button>
+        <button className="pml-btn pml-primary" onClick={download} title={L.download}>{L.download}</button>
       </div>
 
       <div className="pml-stage">
