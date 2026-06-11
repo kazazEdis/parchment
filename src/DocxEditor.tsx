@@ -38,7 +38,10 @@ import { patchParagraph, patchSpan, patchAll, emitParagraph } from "./serialize"
 import { twipsToPx } from "./units";
 import { fromPackage, allParagraphs, replaceText, acceptAllChanges, rejectAllChanges, addCommentToParagraph, addCommentToRange, saveBlob, type Doc } from "./doc";
 
-const isPureRuns = (p: Paragraph): boolean => p.children.length > 0 && p.children.every((n) => n.type === "run");
+// Editable iff the paragraph has no non-run inline (hyperlink/drawing/math render read-only). An EMPTY
+// paragraph counts as editable (vacuous) — otherwise an empty table cell can't be clicked into or typed
+// in, so a value/variable can never be added where one didn't already exist.
+const isPureRuns = (p: Paragraph): boolean => p.children.every((n) => n.type === "run");
 const renderRunText = (text: string): string => text.replace(/\t/g, "    ");
 
 // Scoped toolbar styling (real :hover / :active / :disabled states, uniform icon buttons, grouped
