@@ -252,7 +252,19 @@ function appendRunToParagraph(documentXml: string, p: Paragraph, runXml: string)
   return documentXml.slice(0, p.source.start) + newOuter + documentXml.slice(p.source.end);
 }
 
-export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChange }: { initialPackage: DocxPackage; collabChannel?: string; onAiRewrite?: (selectedText: string, instruction: string) => Promise<string>; onChange?: (doc: Doc) => void }): React.ReactElement {
+// A run's text split for display: plain "text" plus optional template tokens the host wants to
+// highlight as inline pills — "field" (a value placeholder) or "locked" (a structural control the
+// user shouldn't break). The engine stays template-agnostic: the HOST supplies `tokenize`. Tokens
+// remain editable (the pill is purely visual) so the caret/commit math is unchanged; concatenating
+// every token's `text` MUST reproduce the input exactly, or the model round-trip breaks.
+export type EditorToken = { text: string; kind: "text" | "field" | "locked" };
+
+const TOKEN_STYLE: Record<"field" | "locked", React.CSSProperties> = {
+  field:  { background: "#E8F0EC", color: "#1C5742", borderRadius: 4, padding: "0 3px", boxShadow: "inset 0 0 0 1px #C5DAD0" },
+  locked: { background: "#FBF1DA", color: "#8A6A12", borderRadius: 4, padding: "0 3px", boxShadow: "inset 0 0 0 1px #E8D6A8" },
+};
+
+export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChange, tokenize }: { initialPackage: DocxPackage; collabChannel?: string; onAiRewrite?: (selectedText: string, instruction: string) => Promise<string>; onChange?: (doc: Doc) => void; tokenize?: (text: string) => EditorToken[] }): React.ReactElement {
   const [state, dispatch] = useReducer(reducer, undefined, () => ({ doc: fromPackage(initialPackage), past: [], future: [] }));
   const { doc } = state;
   // Notify the host of the current document on every change (initial + each edit) — lets a parent
@@ -548,10 +560,25 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
   const page = { width: twipsToPx(sec?.pageSize?.width ?? 11906), padding: `${twipsToPx(m.top ?? 1440)}px ${twipsToPx(m.right ?? 1440)}px ${twipsToPx(m.bottom ?? 1440)}px ${twipsToPx(m.left ?? 1440)}px` };
   let pIndex = -1;
 
+  // Render a run's text as one or more spans, decorating host-supplied template tokens as inline
+  // pills. The pill is visual only: the span stays editable and (in the editable path) carries
+  // data-ri, so the DOM→model commit + caret math are identical to a single plain span. With no
+  // `tokenize` (or a single "text" token) this collapses to exactly the previous one-span render.
+  const runSpans = (text: string, baseStyle: React.CSSProperties, track: Run["track"], keyBase: string, ri?: number): React.ReactNode[] => {
+    const segs = tokenize ? tokenize(text) : [{ text, kind: "text" as const }];
+    return segs.filter((s) => s.text).map((s, si) => {
+      const style = s.kind === "text" ? baseStyle : { ...baseStyle, ...TOKEN_STYLE[s.kind] };
+      return (
+        <span key={`${keyBase}-${si}`} data-ri={ri} data-token={s.kind === "text" ? undefined : s.kind}
+          style={track ? { ...style, ...trackCss(track.type) } : style}>{renderRunText(s.text)}</span>
+      );
+    });
+  };
+
   const renderInlineStatic = (n: Inline, paraPPr: Paragraph["pPr"], key: number, tableStyleId?: string): React.ReactNode => {
     if (n.type === "run") {
       const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, paraPPr, n.rPr, tableStyleId));
-      return <span key={key} style={n.track ? { ...css, ...trackCss(n.track.type) } : css}>{renderRunText(n.text)}</span>;
+      return <React.Fragment key={key}>{runSpans(n.text, css, n.track, String(key))}</React.Fragment>;
     }
     if (n.type === "hyperlink") return <a key={key} style={{ color: "#0563C1", textDecoration: "underline" }}>{n.children.map((c, i) => renderInlineStatic(c, paraPPr, i))}</a>;
     if (n.type === "footnoteRef") return <sup key={key} style={{ color: "#1C5742", fontSize: "0.7em" }}>{n.id}</sup>;
@@ -588,9 +615,9 @@ export function DocxEditor({ initialPackage, collabChannel, onAiRewrite, onChang
       >
         {markerEl}
         {hasText
-          ? runs.filter((r) => r.text.length > 0).map((r, i) => {
+          ? runs.filter((r) => r.text.length > 0).flatMap((r, i) => {
               const css = runCss(effectiveRunProps(ctx.sheet, ctx.numbering, p.pPr, r.rPr, tableStyleId));
-              return <span key={i} data-ri={i} style={r.track ? { ...css, ...trackCss(r.track.type) } : css}>{renderRunText(r.text)}</span>;
+              return runSpans(r.text, css, r.track, String(i), i);
             })
           : <br />}
       </p>
