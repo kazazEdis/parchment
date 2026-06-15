@@ -63,6 +63,22 @@ export function computePageBreaks(
   return breaks;
 }
 
+// Fuse rows linked by Word "keep with next" (w:keepNext) into single atomic ranges for pagination.
+// Each input row is its measured [top, bottom] plus a `keep` flag; a `keep` row merges with the
+// following row(s) until one without the flag (inclusive), so e.g. a section-header row stays glued
+// to its first content row and never orphans at the foot of a page. The fused ranges feed
+// computePageBreaks' atomicRanges.
+export function fuseKeepNextRows(rows: { top: number; bottom: number; keep: boolean }[]): [number, number][] {
+  const out: [number, number][] = [];
+  for (let k = 0; k < rows.length; k++) {
+    const top = rows[k].top;
+    let bottom = rows[k].bottom;
+    while (rows[k].keep && k + 1 < rows.length) { k++; bottom = rows[k].bottom; }
+    out.push([top, bottom]);
+  }
+  return out;
+}
+
 export function packPages(heights: number[], contentHeight: number): number[][] {
   const pages: number[][] = [];
   let cur: number[] = [];

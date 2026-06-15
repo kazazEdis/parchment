@@ -18,7 +18,7 @@ import { cellBorderStyle } from "./tableCss";
 import { resolveImageDataUrl, relationshipTarget } from "./images";
 import { ommlToMathML } from "./math";
 import { twipsToPx, emuToPx } from "./units";
-import { computePageBreaks } from "./paginate";
+import { computePageBreaks, fuseKeepNextRows } from "./paginate";
 import { ensureFontsInjected } from "./fonts";
 
 interface Ctx {
@@ -154,8 +154,12 @@ function renderBlock(b: Block, ctx: Ctx, key: number): React.ReactElement {
       <tbody>
         {grid.map((cells, ri) => {
           let col = 0;   // running grid column so first/last-column edges resolve to the table's outer border
+          // w:keepNext on a row's paragraph → keep this row on the same page as the next (Word "keep with
+          // next"). Tagged here; the paginator merges the tagged row with its successor into one atomic
+          // range so a section header never gets orphaned at the foot of a page.
+          const keepNext = cells.some((rc) => rc.cell.blocks.some((cb) => cb.type === "paragraph" && cb.pPr?.keepNext));
           return (
-            <tr key={ri}>{cells.map((rc, ci) => {
+            <tr key={ri} data-keep-next={keepNext ? "1" : undefined}>{cells.map((rc, ci) => {
               const cbd = rc.cell.props.borders;   // cell w:tcBorders override the table border per side
               const firstCol = col === 0;
               const lastCol = col + rc.colSpan >= totalCols;
@@ -271,11 +275,14 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
     // Table rows must not be sliced across a page boundary (the slice cuts cell text mid-line and the
     // continuation overlaps the row's border on the next page). Collect each row's [top, bottom] flow
     // range as an atomic region so a break lands at the row's top instead of through it.
-    const rowRanges: [number, number][] = [];
-    root.querySelectorAll("tr").forEach((tr) => {
+    const rows = [...root.querySelectorAll("tr")].map((tr) => {
       const r = tr.getBoundingClientRect();
-      rowRanges.push([Math.round((r.top - top) / scale), Math.round((r.bottom - top) / scale)]);
+      return { top: Math.round((r.top - top) / scale), bottom: Math.round((r.bottom - top) / scale), keep: tr.hasAttribute("data-keep-next") };
     });
+    // Fuse data-keep-next (w:keepNext) rows with their successor into ONE atomic range, so a break can't
+    // land between a "keep with next" section header and its first content row — the whole group moves to
+    // the next page together (unless taller than a page, then computePageBreaks allows the split).
+    const rowRanges = fuseKeepNextRows(rows);
     // How far the first-page header pokes below the normal top margin. The logo band usually fits the
     // top-margin slack, so the page-1 body is only NUDGED down by this (into the same slack) — page 1
     // keeps its full content height, matching Word (which doesn't drop a row to show the letterhead).
