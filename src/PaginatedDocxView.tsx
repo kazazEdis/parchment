@@ -346,8 +346,12 @@ export function PaginatedDocxView({ pkg, headerOverride, footerOverride }: {
               <div style={{ position: "absolute", top: geo.headerTop, left: geo.padLeft, right: geo.padRight }}>{headerOverride}</div>
             ) : null}
             {/* window clipped to this page's line slice; the same flow translated up by startY. On page 1 a
-                tall first-page header pushes the body down by bodyExtra (and shortens its content height). */}
-            <div style={{ marginTop: bodyExtra, height: Math.min(endY - startY, geo.contentHeight - bodyExtra), overflow: "hidden" }}>
+                tall first-page header pushes the body down by bodyExtra (and shortens its content height).
+                Clip 1px short of the break: a collapsed table border (border-collapse) on the NEXT page's
+                first row is centred on its top edge (at endY), so half of it would otherwise sliver
+                through the clip bottom and float on this page. The break sits on a line/row boundary, so
+                the hidden 1px is empty slack (or at most a descender tip), never real content. */}
+            <div style={{ marginTop: bodyExtra, height: Math.max(0, Math.min(endY - startY, geo.contentHeight - bodyExtra) - 1), overflow: "hidden" }}>
               <div style={{ transform: `translateY(${-startY}px)`, width: geo.contentWidth }}>{blockNodes}</div>
             </div>
             {footer.length > 0 ? (
